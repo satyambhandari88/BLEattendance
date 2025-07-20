@@ -344,10 +344,24 @@ exports.getAllBranches = async (req, res) => {
 // Fetch all subjects
 exports.getAllSubjects = async (req, res) => {
   try {
-    const subjects = await Subject.find();
+    const subjects = await Subject.find().select('_id name'); // Only get id and name
     res.status(200).json({ success: true, subjects });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to fetch subjects', error: err.message });
+  }
+};
+
+
+exports.getAcademicStructures = async (req, res) => {
+  try {
+    const structures = await AcademicStructure.find()
+      .populate('year', 'name')
+      .populate('branch', 'name')
+      .populate('subjects', '_id name');
+    
+    res.status(200).json({ success: true, structures });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to fetch academic structures', error: err.message });
   }
 };
 
