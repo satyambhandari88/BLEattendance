@@ -41,5 +41,6 @@ router.post('/add-academic-structure', addAcademicStructure);
 router.get('/all-years', getAllYears);
 router.get('/all-branches', getAllBranches);
 router.get('/all-subjects', getAllSubjects);
+router.get('/academic-structures', getAcademicStructures);
 
 module.exports = router;
