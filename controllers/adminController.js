@@ -757,14 +757,30 @@ exports.generateAttendanceRegister = async (req, res) => {
     doc.y += 30;
     const footerY = doc.y;
 
-    // Statistics summary box
+    // Calculate statistics for all students
     const totalStudents = students.length;
-    const avgAttendance = students.reduce((acc, student, index) => {
-      // Recalculate attendance for summary
-      const presentDays = attendanceRecords.filter(r => r.status === 'present').length;
-      const totalDays = daysInMonth;
-      return acc + (totalDays > 0 ? (presentDays / totalDays) * 100 : 0);
-    }, 0) / totalStudents;
+    let totalPresentDays = 0;
+    let totalPossibleDays = 0;
+
+    // Calculate average attendance across all students
+    for (const student of students) {
+      const studentAttendance = await Attendance.find({
+        student: student._id,
+        subject: subject,
+        date: {
+          $gte: new Date(selectedYear, selectedMonth, 1),
+          $lte: new Date(selectedYear, selectedMonth, daysInMonth)
+        }
+      });
+      
+      const presentCount = studentAttendance.filter(r => r.status === 'present').length;
+      const totalMarkedDays = studentAttendance.length;
+      
+      totalPresentDays += presentCount;
+      totalPossibleDays += Math.max(totalMarkedDays, 1); // Avoid division by zero
+    }
+
+    const avgAttendance = totalPossibleDays > 0 ? (totalPresentDays / totalPossibleDays) * 100 : 0;
 
     // Summary cards
     doc.rect(40, footerY, 200, 80).fill(colors.background);
