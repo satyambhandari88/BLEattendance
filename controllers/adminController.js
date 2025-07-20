@@ -368,11 +368,12 @@ exports.getAcademicStructures = async (req, res) => {
 
 
 // Get subjects assigned to teacher for specific year and branch
+
 exports.getTeacherSubjects = async (req, res) => {
   try {
     const { teacherId, yearId, branchId } = req.params;
 
-    // Validate IDs are proper MongoDB ObjectIds
+    // Validate IDs
     if (!mongoose.Types.ObjectId.isValid(teacherId) || 
         !mongoose.Types.ObjectId.isValid(yearId) || 
         !mongoose.Types.ObjectId.isValid(branchId)) {
@@ -382,13 +383,8 @@ exports.getTeacherSubjects = async (req, res) => {
       });
     }
 
-    // Convert string IDs to ObjectIds
-    const teacherObjectId = new mongoose.Types.ObjectId(teacherId);
-    const yearObjectId = new mongoose.Types.ObjectId(yearId);
-    const branchObjectId = new mongoose.Types.ObjectId(branchId);
-
     // Get teacher with subjects
-    const teacher = await Teacher.findById(teacherObjectId).populate('subjects');
+    const teacher = await Teacher.findById(teacherId).populate('subjects');
     if (!teacher) {
       return res.status(404).json({ 
         success: false, 
@@ -396,10 +392,10 @@ exports.getTeacherSubjects = async (req, res) => {
       });
     }
 
-    // Get academic structure for year and branch
+    // Get academic structure
     const structure = await AcademicStructure.findOne({
-      year: yearObjectId,
-      branch: branchObjectId
+      year: yearId,
+      branch: branchId
     }).populate('subjects');
 
     if (!structure) {
@@ -409,9 +405,10 @@ exports.getTeacherSubjects = async (req, res) => {
       });
     }
 
-    // Filter subjects that exist in both structure and teacher's subjects
-    const availableSubjects = structure.subjects.filter(subject => 
-      teacher.subjects.some(teacherSubj => teacherSubj._id.equals(subject._id))
+    // Filter subjects
+    const availableSubjects = structure.subjects
+      .filter(subject => 
+        teacher.subjects.some(teacherSubj => teacherSubj._id.equals(subject._id))
       .map(subject => ({
         _id: subject._id,
         name: subject.name,
@@ -431,8 +428,7 @@ exports.getTeacherSubjects = async (req, res) => {
     });
     return res.status(500).json({ 
       success: false, 
-      message: 'Server error while fetching subjects', 
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      message: 'Server error while fetching subjects'
     });
   }
 };
