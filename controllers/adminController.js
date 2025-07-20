@@ -369,47 +369,32 @@ exports.getAcademicStructures = async (req, res) => {
 
 // Get subjects assigned to teacher for specific year and branch
 
-exports.getTeacherSubjects = async (req, res) => {
+xports.getTeacherSubjects = async (req, res) => {
   try {
-    // Debug: Log incoming request
-    console.log('Request received for teacher subjects:', req.params);
-
     const { teacherId, yearId, branchId } = req.params;
 
-    // Validate all IDs are proper MongoDB ObjectIds
-    const isValid = [teacherId, yearId, branchId].every(id => 
-      mongoose.Types.ObjectId.isValid(id)
-    );
-
-    if (!isValid) {
-      console.warn('Invalid ID format received:', { teacherId, yearId, branchId });
+    // Validate year and branch IDs (must be ObjectIds)
+    if (!mongoose.Types.ObjectId.isValid(yearId) || 
+        !mongoose.Types.ObjectId.isValid(branchId)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid ID format provided',
-        receivedIds: { teacherId, yearId, branchId }
+        message: 'Year and Branch IDs must be valid MongoDB ObjectIds'
       });
     }
 
-    // Convert to ObjectIds
-    const teacherObjId = new mongoose.Types.ObjectId(teacherId);
-    const yearObjId = new mongoose.Types.ObjectId(yearId);
-    const branchObjId = new mongoose.Types.ObjectId(branchId);
+    // Special handling for teacher ID - could be numeric or ObjectId
+    let teacher;
+    if (mongoose.Types.ObjectId.isValid(teacherId)) {
+      teacher = await Teacher.findById(teacherId).populate('subjects');
+    } else {
+      // Fallback to find by numeric ID if not ObjectId
+      teacher = await Teacher.findOne({ teacherNumber: teacherId }).populate('subjects');
+    }
 
-    // Debug: Log database query parameters
-    console.log('Querying database with:', {
-      teacherObjId,
-      yearObjId, 
-      branchObjId
-    });
-
-    // Get teacher with subjects
-    const teacher = await Teacher.findById(teacherObjId).populate('subjects');
     if (!teacher) {
-      console.warn('Teacher not found:', teacherObjId);
       return res.status(404).json({
         success: false,
-        message: 'Teacher not found',
-        teacherId: teacherObjId
+        message: 'Teacher not found'
       });
     }
 
