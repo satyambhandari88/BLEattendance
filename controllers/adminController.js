@@ -371,8 +371,8 @@ exports.getTeacherSubjects = async (req, res) => {
   try {
     const { teacherId, yearId, branchId } = req.params;
 
-    // Validate IDs
-    if (!mongoose.Types.ObjectId.isValid(teacherId) {
+    // Validate IDs - Fixed the missing parentheses here
+    if (!mongoose.Types.ObjectId.isValid(teacherId)) {
       return res.status(400).json({ success: false, message: 'Invalid teacher ID' });
     }
     if (!mongoose.Types.ObjectId.isValid(yearId)) {
@@ -382,13 +382,12 @@ exports.getTeacherSubjects = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid branch ID' });
     }
 
-    // Get teacher with subjects
+    // Rest of the function remains the same...
     const teacher = await Teacher.findById(teacherId).populate('subjects');
     if (!teacher) {
       return res.status(404).json({ success: false, message: 'Teacher not found' });
     }
 
-    // Get academic structure for year and branch
     const structure = await AcademicStructure.findOne({
       year: yearId,
       branch: branchId
@@ -401,14 +400,13 @@ exports.getTeacherSubjects = async (req, res) => {
       });
     }
 
-    // Filter subjects that exist in both structure and teacher's subjects
     const availableSubjects = structure.subjects.filter(subject => 
       teacher.subjects.some(teacherSubj => teacherSubj._id.equals(subject._id))
-      .map(subject => ({
-        _id: subject._id,
-        name: subject.name,
-        code: subject.code || ''
-      }));
+    ).map(subject => ({
+      _id: subject._id,
+      name: subject.name,
+      code: subject.code || ''
+    }));
 
     res.status(200).json({ 
       success: true, 
