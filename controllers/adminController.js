@@ -6,6 +6,8 @@ const Year = require('../models/Year');
 const Branch = require('../models/Branch');
 const Subject = require('../models/Subject');
 const AcademicStructure = require('../models/AcademicStructure');
+const PDFDocument = require('pdfkit');
+const Attendance = require('../models/Attendance');
 
 const multer = require('multer');
 const csvParser = require('csv-parser');
@@ -446,3 +448,163 @@ exports.getTeacherSubjects = async (req, res) => {
     });
   }
 };
+
+
+
+
+
+exports.generateAttendanceRegister = async (req, res) => {
+  try {
+    const { year, branch, subject, month } = req.body;
+    
+    // Validate inputs
+    if (!year || !branch || !subject || !month) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Year, branch, subject, and month are required' 
+      });
+    }
+
+    // Parse month and year (format: YYYY-MM)
+    const [yearStr, monthStr] = month.split('-');
+    const selectedYear = parseInt(yearStr);
+    const selectedMonth = parseInt(monthStr) - 1; // JavaScript months are 0-indexed
+    
+    // Validate month format
+    if (isNaN(selectedYear) || isNaN(selectedMonth) || selectedMonth < 0 || selectedMonth > 11) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid month format. Use YYYY-MM' 
+      });
+    }
+
+    // Get all students for the selected year and branch
+    const students = await Student.find({ 
+      year: year,
+      department: branch 
+    }).sort('rollNumber');
+
+    if (students.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'No students found for the selected year and branch' 
+      });
+    }
+
+    // Get number of days in the selected month
+    const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+
+    // Prepare the PDF document
+    const doc = new PDFDocument({ margin: 30 });
+    const fileName = `attendance_register_${month}.pdf`;
+    const filePath = `./temp/${fileName}`;
+    
+    // Ensure temp directory exists
+    if (!fs.existsSync('./temp')) {
+      fs.mkdirSync('./temp');
+    }
+
+    // Pipe the PDF to a file
+    const stream = fs.createWriteStream(filePath);
+    doc.pipe(stream);
+
+    // Add header
+    doc.fontSize(18).text('Monthly Attendance Register', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(12).text(`Month: ${month} | Branch: ${branch} | Year: ${year} | Subject: ${subject}`, { align: 'center' });
+    doc.moveDown(2);
+
+    // Create table headers
+    const headers = ['Roll No', 'Name', ...Array.from({ length: daysInMonth }, (_, i) => (i + 1).toString()), 'Present', 'Absent', '%'];
+    const columnWidths = [60, 120, ...Array(daysInMonth).fill(20), 50, 50, 40];
+    
+    // Draw table headers
+    doc.font('Helvetica-Bold');
+    let x = 30;
+    headers.forEach((header, i) => {
+      doc.text(header, x, doc.y, { width: columnWidths[i], align: 'center' });
+      x += columnWidths[i];
+    });
+    doc.moveDown();
+
+    // Draw horizontal line
+    doc.moveTo(30, doc.y).lineTo(x, doc.y).stroke();
+
+    // Process each student
+    doc.font('Helvetica');
+    for (const student of students) {
+      // Get attendance records for this student and subject for the entire month
+      const attendanceRecords = await Attendance.find({
+        student: student._id,
+        subject: subject,
+        date: {
+          $gte: new Date(selectedYear, selectedMonth, 1),
+          $lte: new Date(selectedYear, selectedMonth, daysInMonth)
+        }
+      }).sort('date');
+
+      // Create day-wise attendance status
+      const dayStatus = {};
+      attendanceRecords.forEach(record => {
+        const day = record.date.getDate();
+        dayStatus[day] = record.status === 'present' ? 'P' : 'A';
+      });
+
+      // Calculate totals
+      const presentCount = attendanceRecords.filter(r => r.status === 'present').length;
+      const absentCount = daysInMonth - presentCount;
+      const percentage = Math.round((presentCount / daysInMonth) * 100);
+
+      // Add student row to PDF
+      x = 30;
+      doc.text(student.rollNumber.toString(), x, doc.y, { width: columnWidths[0], align: 'center' });
+      x += columnWidths[0];
+      doc.text(student.name, x, doc.y, { width: columnWidths[1], align: 'left' });
+      x += columnWidths[1];
+
+      // Add day columns
+      for (let day = 1; day <= daysInMonth; day++) {
+        doc.text(dayStatus[day] || '-', x, doc.y, { width: columnWidths[day + 1], align: 'center' });
+        x += columnWidths[day + 1];
+      }
+
+      // Add totals
+      doc.text(presentCount.toString(), x, doc.y, { width: columnWidths[daysInMonth + 2], align: 'center' });
+      x += columnWidths[daysInMonth + 2];
+      doc.text(absentCount.toString(), x, doc.y, { width: columnWidths[daysInMonth + 3], align: 'center' });
+      x += columnWidths[daysInMonth + 3];
+      doc.text(`${percentage}%`, x, doc.y, { width: columnWidths[daysInMonth + 4], align: 'center' });
+
+      doc.moveDown();
+    }
+
+    // Add legend
+    doc.moveDown(2);
+    doc.font('Helvetica-Bold').text('Legend:', 30, doc.y);
+    doc.font('Helvetica').text('P = Present, A = Absent, - = No record', 30, doc.y + 20);
+
+    // Finalize PDF
+    doc.end();
+
+    // Wait for PDF to be generated
+    await new Promise(resolve => stream.on('finish', resolve));
+
+    // Send the file
+    res.download(filePath, fileName, (err) => {
+      if (err) {
+        console.error('Error sending file:', err);
+      }
+      // Clean up: delete the temporary file
+      fs.unlinkSync(filePath);
+    });
+
+  } catch (error) {
+    console.error('Error generating attendance register:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error generating attendance register',
+      error: error.message 
+    });
+  }
+};
+
