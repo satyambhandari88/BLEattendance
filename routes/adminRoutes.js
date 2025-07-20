@@ -1,5 +1,8 @@
 const express = require('express');
-const { addStudent, addTeacher, addClass, fetchStudents, fetchTeachers, fetchClasses, uploadMiddleware, uploadCSV  } = require('../controllers/adminController');
+const { addStudent, addTeacher, addClass, fetchStudents, fetchTeachers, fetchClasses, uploadMiddleware, uploadCSV ,addYear,
+  addBranch,
+  addSubject,
+  addAcademicStructure } = require('../controllers/adminController');
 const router = express.Router();
 // const { authenticateAdmin } = require('../middlewares/authMiddleware');
 
@@ -27,4 +30,10 @@ router.post('/add-class', addClass);
 
 
 router.post('/upload-csv', uploadMiddleware, uploadCSV);
+
+router.post('/add-year', addYear);
+router.post('/add-branch', addBranch);
+router.post('/add-subject', addSubject);
+router.post('/add-academic-structure', addAcademicStructure);
+
 module.exports = router;
