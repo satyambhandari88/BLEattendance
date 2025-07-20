@@ -36,7 +36,7 @@ router.post('/upload-csv', uploadMiddleware, uploadCSV);
 router.post('/add-year', addYear);
 router.post('/add-branch', addBranch);
 router.post('/add-subject', addSubject);
-router.post('/add-academic-structure', addAcademicStructure);
+
 
 router.get('/all-years', getAllYears);
 router.get('/all-branches', getAllBranches);
