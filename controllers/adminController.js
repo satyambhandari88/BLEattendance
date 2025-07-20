@@ -1,6 +1,11 @@
 const Student = require('../models/Student');
 const Teacher = require('../models/Teacher');
 const Class = require('../models/AddClass');
+const Year = require('../models/Year');
+const Branch = require('../models/Branch');
+const Subject = require('../models/Subject');
+const AcademicStructure = require('../models/AcademicStructure');
+
 const multer = require('multer');
 const csvParser = require('csv-parser');
 const fs = require('fs');
@@ -222,3 +227,56 @@ exports.addClass = async (req, res) => {
       res.status(500).json({ success: false, message: 'Failed to fetch classes' });
     }
   };
+
+
+
+  exports.addYear = async (req, res) => {
+  try {
+    const year = new Year(req.body);
+    await year.save();
+    res.status(201).json({ message: 'Year added successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error adding year', error: err.message });
+  }
+};
+
+
+
+exports.addBranch = async (req, res) => {
+  try {
+    const branch = new Branch(req.body);
+    await branch.save();
+    res.status(201).json({ message: 'Branch added successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error adding branch', error: err.message });
+  }
+};
+
+
+
+exports.addSubject = async (req, res) => {
+  try {
+    const subject = new Subject(req.body);
+    await subject.save();
+    res.status(201).json({ message: 'Subject added successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error adding subject', error: err.message });
+  }
+};
+
+
+
+
+exports.addAcademicStructure = async (req, res) => {
+  try {
+    const { year, branch, subjects } = req.body;
+
+    const structure = new AcademicStructure({ year, branch, subjects });
+    await structure.save();
+
+    res.status(201).json({ message: 'Academic structure created successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error creating academic structure', error: err.message });
+  }
+};
+
