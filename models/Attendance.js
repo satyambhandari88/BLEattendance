@@ -12,10 +12,7 @@ const attendanceSchema = new mongoose.Schema({
   subject: { type: String, required: true }, // Changed to use subject directly
   status: { type: String, enum: ['Present', 'Absent'], default: 'Absent' },
   time: { type: Date, default: Date.now },
-   year: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Year' 
-  },
+   
 });
 
 module.exports = mongoose.model('Attendance', attendanceSchema);
