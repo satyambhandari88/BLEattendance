@@ -369,7 +369,7 @@ exports.getAcademicStructures = async (req, res) => {
 
 // Get subjects assigned to teacher for specific year and branch
 
-xports.getTeacherSubjects = async (req, res) => {
+exports.getTeacherSubjects = async (req, res) => {
   try {
     const { teacherId, yearId, branchId } = req.params;
 
