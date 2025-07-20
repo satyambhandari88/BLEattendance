@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');  
 const Student = require('../models/Student');
 const Teacher = require('../models/Teacher');
 const Class = require('../models/AddClass');
@@ -371,26 +372,34 @@ exports.getTeacherSubjects = async (req, res) => {
   try {
     const { teacherId, yearId, branchId } = req.params;
 
-    // Validate IDs - Fixed the missing parentheses here
-    if (!mongoose.Types.ObjectId.isValid(teacherId)) {
-      return res.status(400).json({ success: false, message: 'Invalid teacher ID' });
-    }
-    if (!mongoose.Types.ObjectId.isValid(yearId)) {
-      return res.status(400).json({ success: false, message: 'Invalid year ID' });
-    }
-    if (!mongoose.Types.ObjectId.isValid(branchId)) {
-      return res.status(400).json({ success: false, message: 'Invalid branch ID' });
+    // Validate IDs are proper MongoDB ObjectIds
+    if (!mongoose.Types.ObjectId.isValid(teacherId) || 
+        !mongoose.Types.ObjectId.isValid(yearId) || 
+        !mongoose.Types.ObjectId.isValid(branchId)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid ID format provided' 
+      });
     }
 
-    // Rest of the function remains the same...
-    const teacher = await Teacher.findById(teacherId).populate('subjects');
+    // Convert string IDs to ObjectIds
+    const teacherObjectId = new mongoose.Types.ObjectId(teacherId);
+    const yearObjectId = new mongoose.Types.ObjectId(yearId);
+    const branchObjectId = new mongoose.Types.ObjectId(branchId);
+
+    // Get teacher with subjects
+    const teacher = await Teacher.findById(teacherObjectId).populate('subjects');
     if (!teacher) {
-      return res.status(404).json({ success: false, message: 'Teacher not found' });
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Teacher not found' 
+      });
     }
 
+    // Get academic structure for year and branch
     const structure = await AcademicStructure.findOne({
-      year: yearId,
-      branch: branchId
+      year: yearObjectId,
+      branch: branchObjectId
     }).populate('subjects');
 
     if (!structure) {
@@ -400,15 +409,16 @@ exports.getTeacherSubjects = async (req, res) => {
       });
     }
 
+    // Filter subjects that exist in both structure and teacher's subjects
     const availableSubjects = structure.subjects.filter(subject => 
       teacher.subjects.some(teacherSubj => teacherSubj._id.equals(subject._id))
-    ).map(subject => ({
-      _id: subject._id,
-      name: subject.name,
-      code: subject.code || ''
-    }));
+      .map(subject => ({
+        _id: subject._id,
+        name: subject.name,
+        code: subject.code || ''
+      }));
 
-    res.status(200).json({ 
+    return res.status(200).json({ 
       success: true, 
       subjects: availableSubjects 
     });
@@ -419,10 +429,10 @@ exports.getTeacherSubjects = async (req, res) => {
       stack: err.stack,
       params: req.params
     });
-    res.status(500).json({ 
+    return res.status(500).json({ 
       success: false, 
       message: 'Server error while fetching subjects', 
-      error: err.message 
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };
