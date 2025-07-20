@@ -21,9 +21,14 @@ const TeacherSchema = new mongoose.Schema({
     required: true,
   },
   department: {
-    type: String,
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Branch',
     required: true,
   },
+  subjects: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Subject',
+  }],
 }, { timestamps: true });
 
 // Encrypt password before saving
