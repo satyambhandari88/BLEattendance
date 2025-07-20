@@ -366,3 +366,50 @@ exports.getAcademicStructures = async (req, res) => {
 };
 
 
+// Get subjects assigned to teacher for specific year and branch
+exports.getTeacherSubjects = async (req, res) => {
+  try {
+    const { teacherId, yearId, branchId } = req.params;
+
+    // Get teacher with subjects
+    const teacher = await Teacher.findById(teacherId).populate('subjects');
+    if (!teacher) {
+      return res.status(404).json({ success: false, message: 'Teacher not found' });
+    }
+
+    // Get academic structure for year and branch
+    const structure = await AcademicStructure.findOne({
+      year: yearId,
+      branch: branchId
+    }).populate('subjects');
+
+    if (!structure) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'No academic structure found for this year and branch' 
+      });
+    }
+
+    // Filter subjects that exist in both structure and teacher's subjects
+    const availableSubjects = structure.subjects.filter(subject => 
+      teacher.subjects.some(teacherSubj => teacherSubj._id.equals(subject._id))
+      .map(subject => ({
+        _id: subject._id,
+        name: subject.name
+      }));
+
+    res.status(200).json({ 
+      success: true, 
+      subjects: availableSubjects 
+    });
+
+  } catch (err) {
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching subjects', 
+      error: err.message 
+    });
+  }
+};
+
+
