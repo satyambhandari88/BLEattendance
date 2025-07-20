@@ -393,10 +393,10 @@ exports.getTeacherSubjects = async (req, res) => {
     // Filter subjects that exist in both structure and teacher's subjects
     const availableSubjects = structure.subjects.filter(subject => 
       teacher.subjects.some(teacherSubj => teacherSubj._id.equals(subject._id))
-      .map(subject => ({
-        _id: subject._id,
-        name: subject.name
-      }));
+    ).map(subject => ({
+      _id: subject._id,
+      name: subject.name
+    }));
 
     res.status(200).json({ 
       success: true, 
@@ -411,5 +411,3 @@ exports.getTeacherSubjects = async (req, res) => {
     });
   }
 };
-
-
