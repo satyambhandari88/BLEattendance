@@ -373,48 +373,48 @@ exports.getTeacherSubjects = async (req, res) => {
   try {
     const { teacherId, yearId, branchId } = req.params;
 
-    // Validate year and branch IDs (must be ObjectIds)
-    if (!mongoose.Types.ObjectId.isValid(yearId) || 
+    // 1. Validate all IDs first
+    if (!mongoose.Types.ObjectId.isValid(teacherId) || 
+        !mongoose.Types.ObjectId.isValid(yearId) || 
         !mongoose.Types.ObjectId.isValid(branchId)) {
       return res.status(400).json({
         success: false,
-        message: 'Year and Branch IDs must be valid MongoDB ObjectIds'
+        message: 'All IDs must be valid MongoDB ObjectIds',
+        receivedIds: { teacherId, yearId, branchId }
       });
     }
 
-    // Special handling for teacher ID - could be numeric or ObjectId
-    let teacher;
-    if (mongoose.Types.ObjectId.isValid(teacherId)) {
-      teacher = await Teacher.findById(teacherId).populate('subjects');
-    } else {
-      // Fallback to find by numeric ID if not ObjectId
-      teacher = await Teacher.findOne({ teacherNumber: teacherId }).populate('subjects');
-    }
+    // 2. Convert to ObjectIds - do this before any usage
+    const teacherObjId = new mongoose.Types.ObjectId(teacherId);
+    const yearObjId = new mongoose.Types.ObjectId(yearId);
+    const branchObjId = new mongoose.Types.ObjectId(branchId);
 
+    // 3. Find teacher
+    const teacher = await Teacher.findById(teacherObjId).populate('subjects');
     if (!teacher) {
       return res.status(404).json({
         success: false,
-        message: 'Teacher not found'
+        message: 'Teacher not found',
+        teacherId: teacherObjId
       });
     }
 
-    // Get academic structure
+    // 4. Get academic structure
     const structure = await AcademicStructure.findOne({
       year: yearObjId,
       branch: branchObjId
     }).populate('subjects');
 
     if (!structure) {
-      console.warn('Academic structure not found:', { yearObjId, branchObjId });
       return res.status(404).json({
         success: false,
-        message: 'No academic structure found for this year and branch combination',
+        message: 'Academic structure not found for this year/branch',
         yearId: yearObjId,
         branchId: branchObjId
       });
     }
 
-    // Filter subjects that teacher is authorized to teach
+    // 5. Filter teacher's authorized subjects
     const availableSubjects = structure.subjects
       .filter(subject => teacher.subjects.some(
         teacherSubj => teacherSubj._id.equals(subject._id)
@@ -424,12 +424,6 @@ exports.getTeacherSubjects = async (req, res) => {
         name: subject.name,
         code: subject.code || ''
       }));
-
-    // Debug: Log successful response
-    console.log('Successfully fetched subjects:', {
-      count: availableSubjects.length,
-      teacher: teacher._id
-    });
 
     return res.status(200).json({
       success: true,
@@ -448,8 +442,7 @@ exports.getTeacherSubjects = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Internal server error while fetching subjects',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined,
-      timestamp: new Date().toISOString()
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };
