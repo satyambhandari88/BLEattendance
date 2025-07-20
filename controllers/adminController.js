@@ -493,9 +493,16 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     // Get number of days in the selected month
     const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                       'July', 'August', 'September', 'October', 'November', 'December'];
 
-    // Prepare the PDF document
-    const doc = new PDFDocument({ margin: 30 });
+    // Prepare the PDF document with custom page size for better layout
+    const doc = new PDFDocument({ 
+      margin: 40,
+      size: 'A4',
+      layout: 'landscape' // Better for wide tables
+    });
+    
     const fileName = `attendance_register_${month}.pdf`;
     const filePath = `./temp/${fileName}`;
     
@@ -508,30 +515,114 @@ exports.generateAttendanceRegister = async (req, res) => {
     const stream = fs.createWriteStream(filePath);
     doc.pipe(stream);
 
-    // Add header
-    doc.fontSize(18).text('Monthly Attendance Register', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(12).text(`Month: ${month} | Branch: ${branch} | Year: ${year} | Subject: ${subject}`, { align: 'center' });
-    doc.moveDown(2);
+    // Define colors
+    const colors = {
+      primary: '#2563eb',      // Professional blue
+      secondary: '#64748b',    // Slate gray
+      success: '#16a34a',      // Green for present
+      danger: '#dc2626',       // Red for absent
+      background: '#f8fafc',   // Light background
+      border: '#e2e8f0',       // Border color
+      text: '#1e293b'          // Dark text
+    };
 
-    // Create table headers
-    const headers = ['Roll No', 'Name', ...Array.from({ length: daysInMonth }, (_, i) => (i + 1).toString()), 'Present', 'Absent', '%'];
-    const columnWidths = [60, 120, ...Array(daysInMonth).fill(20), 50, 50, 40];
+    // Add decorative header background
+    doc.rect(0, 0, doc.page.width, 120).fill(colors.primary);
     
-    // Draw table headers
-    doc.font('Helvetica-Bold');
-    let x = 30;
+    // Add institution logo area (placeholder)
+    doc.circle(80, 60, 25).fill('#ffffff');
+    doc.fillColor(colors.primary).fontSize(16).font('Helvetica-Bold')
+       .text('LOGO', 68, 55, { width: 24, align: 'center' });
+
+    // Main title
+    doc.fillColor('#ffffff').fontSize(24).font('Helvetica-Bold')
+       .text('MONTHLY ATTENDANCE REGISTER', 140, 35, { align: 'left' });
+
+    // Subtitle with decorative elements
+    doc.fontSize(12).font('Helvetica')
+       .text('Academic Performance Tracking System', 140, 65, { align: 'left' });
+
+    // Add decorative elements
+    doc.rect(doc.page.width - 100, 20, 80, 80).fill('rgba(255,255,255,0.1)');
+    doc.circle(doc.page.width - 60, 60, 30).stroke('#ffffff');
+
+    // Reset position for content
+    doc.y = 140;
+
+    // Information cards section
+    const cardY = doc.y;
+    const cardHeight = 60;
+    const cardWidth = (doc.page.width - 120) / 4;
+
+    // Draw information cards
+    const infoCards = [
+      { label: 'Academic Year', value: year, icon: '📅' },
+      { label: 'Department', value: branch, icon: '🏢' },
+      { label: 'Subject', value: subject, icon: '📚' },
+      { label: 'Month', value: `${monthNames[selectedMonth]} ${selectedYear}`, icon: '🗓️' }
+    ];
+
+    infoCards.forEach((card, index) => {
+      const x = 40 + (index * (cardWidth + 10));
+      
+      // Card background with gradient effect
+      doc.rect(x, cardY, cardWidth, cardHeight).fill(colors.background);
+      doc.rect(x, cardY, cardWidth, 4).fill(colors.primary);
+      
+      // Card content
+      doc.fillColor(colors.secondary).fontSize(10).font('Helvetica')
+         .text(card.label, x + 10, cardY + 12);
+      
+      doc.fillColor(colors.text).fontSize(12).font('Helvetica-Bold')
+         .text(card.value, x + 10, cardY + 28, { width: cardWidth - 20, ellipsis: true });
+      
+      // Icon
+      doc.fontSize(16).text(card.icon, x + cardWidth - 30, cardY + 22);
+    });
+
+    doc.y = cardY + cardHeight + 30;
+
+    // Enhanced table styling
+    const tableStartY = doc.y;
+    const pageWidth = doc.page.width - 80;
+    
+    // Calculate dynamic column widths
+    const fixedColsWidth = 200; // Roll No (60) + Name (140)
+    const summaryColsWidth = 140; // Present (40) + Absent (40) + % (40) + Total (20)
+    const availableWidth = pageWidth - fixedColsWidth - summaryColsWidth;
+    const dayColWidth = Math.max(18, Math.min(25, availableWidth / daysInMonth));
+    
+    const headers = ['Roll No', 'Student Name', ...Array.from({ length: daysInMonth }, (_, i) => (i + 1).toString()), 'Present', 'Absent', '%', 'Grade'];
+    const columnWidths = [60, 140, ...Array(daysInMonth).fill(dayColWidth), 45, 45, 35, 50];
+
+    // Draw table header background
+    doc.rect(40, tableStartY - 5, pageWidth, 35).fill(colors.primary);
+    
+    // Table headers with enhanced styling
+    doc.font('Helvetica-Bold').fillColor('#ffffff').fontSize(10);
+    let x = 40;
+    let headerY = tableStartY + 5;
+    
     headers.forEach((header, i) => {
-      doc.text(header, x, doc.y, { width: columnWidths[i], align: 'center' });
+      if (i < 2) {
+        // Fixed columns
+        doc.text(header, x + 5, headerY, { width: columnWidths[i] - 10, align: 'center' });
+      } else if (i >= headers.length - 4) {
+        // Summary columns
+        doc.text(header, x + 2, headerY, { width: columnWidths[i] - 4, align: 'center' });
+      } else {
+        // Day columns - vertical text for better fit
+        doc.text(header, x + 2, headerY, { width: columnWidths[i] - 4, align: 'center' });
+      }
       x += columnWidths[i];
     });
-    doc.moveDown();
 
-    // Draw horizontal line
-    doc.moveTo(30, doc.y).lineTo(x, doc.y).stroke();
+    doc.y = tableStartY + 30;
 
-    // Process each student
-    doc.font('Helvetica');
+    // Enhanced student rows
+    doc.font('Helvetica').fontSize(9);
+    let rowIndex = 0;
+    
     for (const student of students) {
       // Get attendance records for this student and subject for the entire month
       const attendanceRecords = await Attendance.find({
@@ -552,36 +643,171 @@ exports.generateAttendanceRegister = async (req, res) => {
 
       // Calculate totals
       const presentCount = attendanceRecords.filter(r => r.status === 'present').length;
-      const absentCount = daysInMonth - presentCount;
-      const percentage = Math.round((presentCount / daysInMonth) * 100);
+      const absentCount = attendanceRecords.filter(r => r.status === 'absent').length;
+      const totalMarkedDays = presentCount + absentCount;
+      const percentage = totalMarkedDays > 0 ? Math.round((presentCount / totalMarkedDays) * 100) : 0;
+      
+      // Determine grade based on percentage
+      let grade = 'F';
+      let gradeColor = colors.danger;
+      if (percentage >= 90) { grade = 'A+'; gradeColor = '#059669'; }
+      else if (percentage >= 80) { grade = 'A'; gradeColor = colors.success; }
+      else if (percentage >= 70) { grade = 'B'; gradeColor = '#d97706'; }
+      else if (percentage >= 60) { grade = 'C'; gradeColor = '#dc6d20'; }
+      else if (percentage >= 50) { grade = 'D'; gradeColor = '#dc2626'; }
 
-      // Add student row to PDF
-      x = 30;
-      doc.text(student.rollNumber.toString(), x, doc.y, { width: columnWidths[0], align: 'center' });
+      const currentY = doc.y;
+      const rowHeight = 25;
+
+      // Alternating row background
+      if (rowIndex % 2 === 0) {
+        doc.rect(40, currentY - 2, pageWidth, rowHeight).fill('#f8fafc');
+      }
+
+      // Row border
+      doc.rect(40, currentY - 2, pageWidth, rowHeight).stroke(colors.border);
+
+      // Student data
+      x = 40;
+      doc.fillColor(colors.text);
+      
+      // Roll Number
+      doc.font('Helvetica-Bold').text(student.rollNumber.toString(), x + 5, currentY + 6, { 
+        width: columnWidths[0] - 10, align: 'center' 
+      });
       x += columnWidths[0];
-      doc.text(student.name, x, doc.y, { width: columnWidths[1], align: 'left' });
+
+      // Name
+      doc.font('Helvetica').text(student.name, x + 5, currentY + 6, { 
+        width: columnWidths[1] - 10, align: 'left', ellipsis: true 
+      });
       x += columnWidths[1];
 
-      // Add day columns
+      // Day columns with color coding
       for (let day = 1; day <= daysInMonth; day++) {
-        doc.text(dayStatus[day] || '-', x, doc.y, { width: columnWidths[day + 1], align: 'center' });
+        const status = dayStatus[day];
+        let displayText = status || '-';
+        let textColor = colors.text;
+        
+        if (status === 'P') {
+          textColor = colors.success;
+          doc.circle(x + dayColWidth/2, currentY + 12, 6).fill('rgba(34, 197, 94, 0.1)');
+        } else if (status === 'A') {
+          textColor = colors.danger;
+          doc.circle(x + dayColWidth/2, currentY + 12, 6).fill('rgba(220, 38, 38, 0.1)');
+        }
+        
+        doc.fillColor(textColor).font('Helvetica-Bold').fontSize(8)
+           .text(displayText, x + 2, currentY + 8, { width: columnWidths[day + 1] - 4, align: 'center' });
         x += columnWidths[day + 1];
       }
 
-      // Add totals
-      doc.text(presentCount.toString(), x, doc.y, { width: columnWidths[daysInMonth + 2], align: 'center' });
+      // Summary columns with enhanced styling
+      doc.fontSize(9).font('Helvetica-Bold');
+      
+      // Present count
+      doc.fillColor(colors.success).text(presentCount.toString(), x + 2, currentY + 6, { 
+        width: columnWidths[daysInMonth + 2] - 4, align: 'center' 
+      });
       x += columnWidths[daysInMonth + 2];
-      doc.text(absentCount.toString(), x, doc.y, { width: columnWidths[daysInMonth + 3], align: 'center' });
-      x += columnWidths[daysInMonth + 3];
-      doc.text(`${percentage}%`, x, doc.y, { width: columnWidths[daysInMonth + 4], align: 'center' });
 
-      doc.moveDown();
+      // Absent count
+      doc.fillColor(colors.danger).text(absentCount.toString(), x + 2, currentY + 6, { 
+        width: columnWidths[daysInMonth + 3] - 4, align: 'center' 
+      });
+      x += columnWidths[daysInMonth + 3];
+
+      // Percentage with color coding
+      let percentColor = colors.danger;
+      if (percentage >= 75) percentColor = colors.success;
+      else if (percentage >= 60) percentColor = '#d97706';
+      
+      doc.fillColor(percentColor).text(`${percentage}%`, x + 2, currentY + 6, { 
+        width: columnWidths[daysInMonth + 4] - 4, align: 'center' 
+      });
+      x += columnWidths[daysInMonth + 4];
+
+      // Grade with background
+      doc.rect(x + 5, currentY + 3, columnWidths[daysInMonth + 5] - 10, 16).fill(gradeColor);
+      doc.fillColor('#ffffff').font('Helvetica-Bold').text(grade, x + 2, currentY + 6, { 
+        width: columnWidths[daysInMonth + 5] - 4, align: 'center' 
+      });
+
+      doc.y = currentY + rowHeight;
+      rowIndex++;
+
+      // Check for page break
+      if (doc.y > doc.page.height - 150) {
+        doc.addPage({ margin: 40, size: 'A4', layout: 'landscape' });
+        
+        // Repeat headers on new page
+        doc.rect(40, 40, pageWidth, 35).fill(colors.primary);
+        doc.font('Helvetica-Bold').fillColor('#ffffff').fontSize(10);
+        x = 40;
+        headers.forEach((header, i) => {
+          doc.text(header, x + 5, 50, { width: columnWidths[i] - 10, align: 'center' });
+          x += columnWidths[i];
+        });
+        doc.y = 80;
+        rowIndex = 0;
+      }
     }
 
-    // Add legend
-    doc.moveDown(2);
-    doc.font('Helvetica-Bold').text('Legend:', 30, doc.y);
-    doc.font('Helvetica').text('P = Present, A = Absent, - = No record', 30, doc.y + 20);
+    // Enhanced footer section
+    doc.y += 30;
+    const footerY = doc.y;
+
+    // Statistics summary box
+    const totalStudents = students.length;
+    const avgAttendance = students.reduce((acc, student, index) => {
+      // Recalculate attendance for summary
+      const presentDays = attendanceRecords.filter(r => r.status === 'present').length;
+      const totalDays = daysInMonth;
+      return acc + (totalDays > 0 ? (presentDays / totalDays) * 100 : 0);
+    }, 0) / totalStudents;
+
+    // Summary cards
+    doc.rect(40, footerY, 200, 80).fill(colors.background);
+    doc.rect(40, footerY, 200, 4).fill(colors.primary);
+    
+    doc.fillColor(colors.text).fontSize(12).font('Helvetica-Bold')
+       .text('Attendance Summary', 50, footerY + 15);
+    
+    doc.fontSize(10).font('Helvetica')
+       .text(`Total Students: ${totalStudents}`, 50, footerY + 35)
+       .text(`Working Days: ${daysInMonth}`, 50, footerY + 50)
+       .text(`Average Attendance: ${avgAttendance.toFixed(1)}%`, 50, footerY + 65);
+
+    // Enhanced legend
+    const legendX = 280;
+    doc.rect(legendX, footerY, 250, 80).fill(colors.background);
+    doc.rect(legendX, footerY, 250, 4).fill(colors.secondary);
+    
+    doc.fillColor(colors.text).fontSize(12).font('Helvetica-Bold')
+       .text('Legend & Grading Scale', legendX + 10, footerY + 15);
+    
+    doc.fontSize(9).font('Helvetica')
+       .fillColor(colors.success).text('● P = Present', legendX + 10, footerY + 35)
+       .fillColor(colors.danger).text('● A = Absent', legendX + 80, footerY + 35)
+       .fillColor(colors.text).text('● - = No Record', legendX + 150, footerY + 35);
+    
+    doc.fontSize(8)
+       .text('A+ (≥90%) | A (≥80%) | B (≥70%) | C (≥60%) | D (≥50%) | F (<50%)', 
+             legendX + 10, footerY + 55);
+
+    // Professional footer
+    doc.fontSize(8).fillColor(colors.secondary)
+       .text(`Generated on: ${new Date().toLocaleDateString('en-IN', { 
+         year: 'numeric', month: 'long', day: 'numeric', 
+         hour: '2-digit', minute: '2-digit' 
+       })}`, legendX + 10, footerY + 70);
+
+    // Add signature section
+    const signatureY = doc.page.height - 80;
+    doc.fontSize(10).fillColor(colors.text)
+       .text('Faculty Signature: ___________________', 40, signatureY)
+       .text('HOD Signature: ___________________', 300, signatureY)
+       .text('Date: _______________', 550, signatureY);
 
     // Finalize PDF
     doc.end();
