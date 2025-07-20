@@ -2,7 +2,9 @@ const express = require('express');
 const { addStudent, addTeacher, addClass, fetchStudents, fetchTeachers, fetchClasses, uploadMiddleware, uploadCSV ,addYear,
   addBranch,
   addSubject,
-  addAcademicStructure } = require('../controllers/adminController');
+  addAcademicStructure, getAllYears,
+  getAllBranches,
+  getAllSubjects } = require('../controllers/adminController');
 const router = express.Router();
 // const { authenticateAdmin } = require('../middlewares/authMiddleware');
 
@@ -35,5 +37,9 @@ router.post('/add-year', addYear);
 router.post('/add-branch', addBranch);
 router.post('/add-subject', addSubject);
 router.post('/add-academic-structure', addAcademicStructure);
+
+router.get('/all-years', getAllYears);
+router.get('/all-branches', getAllBranches);
+router.get('/all-subjects', getAllSubjects);
 
 module.exports = router;
