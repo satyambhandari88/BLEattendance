@@ -172,14 +172,53 @@ exports.uploadCSV = async (req, res) => {
 // Add Teacher
 exports.addTeacher = async (req, res) => {
   try {
-    const { id, name, email, password, department } = req.body;
+    const { id, name, email, password, department, subjects } = req.body;
 
-    const newTeacher = new Teacher({ id, name, email, password, department });
+    // Validate department exists
+    const departmentExists = await Branch.findById(department);
+    if (!departmentExists) {
+      return res.status(400).json({ message: 'Invalid department' });
+    }
+
+    // Validate subjects exist (if any are provided)
+    if (subjects && subjects.length > 0) {
+      const subjectsExist = await Subject.countDocuments({ _id: { $in: subjects } });
+      if (subjectsExist !== subjects.length) {
+        return res.status(400).json({ message: 'One or more subjects are invalid' });
+      }
+    }
+
+    const newTeacher = new Teacher({ 
+      id, 
+      name, 
+      email, 
+      password, 
+      department,
+      subjects: subjects || [] // Handle case where subjects might be undefined
+    });
+
     await newTeacher.save();
 
-    res.status(201).json({ message: 'Teacher added successfully' });
+    // Populate the response with department and subjects details
+    const populatedTeacher = await Teacher.findById(newTeacher._id)
+      .populate('department')
+      .populate('subjects');
+
+    res.status(201).json({ 
+      message: 'Teacher added successfully',
+      teacher: populatedTeacher
+    });
   } catch (error) {
-    res.status(500).json({ message: 'Error adding teacher', error });
+    if (error.code === 11000) {
+      return res.status(400).json({ 
+        message: 'Teacher ID or email already exists',
+        error: error.message 
+      });
+    }
+    res.status(500).json({ 
+      message: 'Error adding teacher', 
+      error: error.message 
+    });
   }
 };
 
