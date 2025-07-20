@@ -6,7 +6,8 @@ const { addStudent, addTeacher, addClass, fetchStudents, fetchTeachers, fetchCla
   getAllBranches,
   getAllSubjects,
       getAcademicStructures,
-       getTeacherSubjects} = require('../controllers/adminController');
+       getTeacherSubjects,
+      generateAttendanceRegister} = require('../controllers/adminController');
 const router = express.Router();
 // const { authenticateAdmin } = require('../middlewares/authMiddleware');
 
@@ -46,7 +47,7 @@ router.get('/all-subjects', getAllSubjects);
 router.post('/add-academic-structure', addAcademicStructure);
 router.get('/academic-structures', getAcademicStructures);
 router.get('/teacher-subjects/:teacherId/:yearId/:branchId', getTeacherSubjects);
-
+router.post('/generate-register', generateAttendanceRegister);
 
 
 module.exports = router;
