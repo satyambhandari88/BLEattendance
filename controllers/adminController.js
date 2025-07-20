@@ -371,6 +371,17 @@ exports.getTeacherSubjects = async (req, res) => {
   try {
     const { teacherId, yearId, branchId } = req.params;
 
+    // Validate IDs
+    if (!mongoose.Types.ObjectId.isValid(teacherId) {
+      return res.status(400).json({ success: false, message: 'Invalid teacher ID' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(yearId)) {
+      return res.status(400).json({ success: false, message: 'Invalid year ID' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(branchId)) {
+      return res.status(400).json({ success: false, message: 'Invalid branch ID' });
+    }
+
     // Get teacher with subjects
     const teacher = await Teacher.findById(teacherId).populate('subjects');
     if (!teacher) {
@@ -386,17 +397,18 @@ exports.getTeacherSubjects = async (req, res) => {
     if (!structure) {
       return res.status(404).json({ 
         success: false, 
-        message: 'No academic structure found for this year and branch' 
+        message: 'No academic structure found for this year and branch combination' 
       });
     }
 
     // Filter subjects that exist in both structure and teacher's subjects
     const availableSubjects = structure.subjects.filter(subject => 
       teacher.subjects.some(teacherSubj => teacherSubj._id.equals(subject._id))
-    ).map(subject => ({
-      _id: subject._id,
-      name: subject.name
-    }));
+      .map(subject => ({
+        _id: subject._id,
+        name: subject.name,
+        code: subject.code || ''
+      }));
 
     res.status(200).json({ 
       success: true, 
@@ -404,9 +416,14 @@ exports.getTeacherSubjects = async (req, res) => {
     });
 
   } catch (err) {
+    console.error('Error in getTeacherSubjects:', {
+      error: err.message,
+      stack: err.stack,
+      params: req.params
+    });
     res.status(500).json({ 
       success: false, 
-      message: 'Error fetching subjects', 
+      message: 'Server error while fetching subjects', 
       error: err.message 
     });
   }
