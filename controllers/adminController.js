@@ -371,64 +371,100 @@ exports.getAcademicStructures = async (req, res) => {
 
 exports.getTeacherSubjects = async (req, res) => {
   try {
+    // Debug: Log incoming request
+    console.log('Request received for teacher subjects:', req.params);
+
     const { teacherId, yearId, branchId } = req.params;
 
-    // Validate IDs
-    if (!mongoose.Types.ObjectId.isValid(teacherId) || 
-        !mongoose.Types.ObjectId.isValid(yearId) || 
-        !mongoose.Types.ObjectId.isValid(branchId)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid ID format provided' 
+    // Validate all IDs are proper MongoDB ObjectIds
+    const isValid = [teacherId, yearId, branchId].every(id => 
+      mongoose.Types.ObjectId.isValid(id)
+    );
+
+    if (!isValid) {
+      console.warn('Invalid ID format received:', { teacherId, yearId, branchId });
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid ID format provided',
+        receivedIds: { teacherId, yearId, branchId }
       });
     }
 
+    // Convert to ObjectIds
+    const teacherObjId = new mongoose.Types.ObjectId(teacherId);
+    const yearObjId = new mongoose.Types.ObjectId(yearId);
+    const branchObjId = new mongoose.Types.ObjectId(branchId);
+
+    // Debug: Log database query parameters
+    console.log('Querying database with:', {
+      teacherObjId,
+      yearObjId, 
+      branchObjId
+    });
+
     // Get teacher with subjects
-    const teacher = await Teacher.findById(teacherId).populate('subjects');
+    const teacher = await Teacher.findById(teacherObjId).populate('subjects');
     if (!teacher) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Teacher not found' 
+      console.warn('Teacher not found:', teacherObjId);
+      return res.status(404).json({
+        success: false,
+        message: 'Teacher not found',
+        teacherId: teacherObjId
       });
     }
 
     // Get academic structure
     const structure = await AcademicStructure.findOne({
-      year: yearId,
-      branch: branchId
+      year: yearObjId,
+      branch: branchObjId
     }).populate('subjects');
 
     if (!structure) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'No academic structure found for this year and branch combination' 
+      console.warn('Academic structure not found:', { yearObjId, branchObjId });
+      return res.status(404).json({
+        success: false,
+        message: 'No academic structure found for this year and branch combination',
+        yearId: yearObjId,
+        branchId: branchObjId
       });
     }
 
-    // Filter subjects
+    // Filter subjects that teacher is authorized to teach
     const availableSubjects = structure.subjects
-      .filter(subject => 
-        teacher.subjects.some(teacherSubj => teacherSubj._id.equals(subject._id))
+      .filter(subject => teacher.subjects.some(
+        teacherSubj => teacherSubj._id.equals(subject._id)
+      ))
       .map(subject => ({
         _id: subject._id,
         name: subject.name,
         code: subject.code || ''
       }));
 
-    return res.status(200).json({ 
-      success: true, 
-      subjects: availableSubjects 
+    // Debug: Log successful response
+    console.log('Successfully fetched subjects:', {
+      count: availableSubjects.length,
+      teacher: teacher._id
+    });
+
+    return res.status(200).json({
+      success: true,
+      subjects: availableSubjects,
+      count: availableSubjects.length
     });
 
   } catch (err) {
-    console.error('Error in getTeacherSubjects:', {
+    console.error('Server error in getTeacherSubjects:', {
       error: err.message,
       stack: err.stack,
-      params: req.params
+      params: req.params,
+      timestamp: new Date().toISOString()
     });
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Server error while fetching subjects'
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error while fetching subjects',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined,
+      timestamp: new Date().toISOString()
     });
   }
 };
