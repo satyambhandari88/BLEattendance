@@ -280,3 +280,36 @@ exports.addAcademicStructure = async (req, res) => {
   }
 };
 
+
+
+// Fetch all years
+exports.getAllYears = async (req, res) => {
+  try {
+    const years = await Year.find();
+    res.status(200).json({ success: true, years });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to fetch years', error: err.message });
+  }
+};
+
+// Fetch all branches
+exports.getAllBranches = async (req, res) => {
+  try {
+    const branches = await Branch.find();
+    res.status(200).json({ success: true, branches });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to fetch branches', error: err.message });
+  }
+};
+
+// Fetch all subjects
+exports.getAllSubjects = async (req, res) => {
+  try {
+    const subjects = await Subject.find();
+    res.status(200).json({ success: true, subjects });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to fetch subjects', error: err.message });
+  }
+};
+
+
