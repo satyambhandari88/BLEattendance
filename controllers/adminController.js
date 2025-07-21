@@ -283,6 +283,58 @@ exports.addClass = async (req, res) => {
 };
 
 
+// Fetch all years
+exports.getAllYears = async (req, res) => {
+  try {
+    const years = await Year.find();
+    res.status(200).json({ success: true, years });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to fetch years', error: err.message });
+  }
+};
+
+
+exports.updateYear = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ success: false, message: 'Year name is required' });
+    }
+
+    const year = await Year.findByIdAndUpdate(
+      id,
+      { name },
+      { new: true, runValidators: true }
+    );
+
+    if (!year) {
+      return res.status(404).json({ success: false, message: 'Year not found' });
+    }
+
+    res.status(200).json({ success: true, message: 'Year updated successfully', year });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Error updating year', error: err.message });
+  }
+};
+
+exports.deleteYear = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const year = await Year.findByIdAndDelete(id);
+
+    if (!year) {
+      return res.status(404).json({ success: false, message: 'Year not found' });
+    }
+
+    res.status(200).json({ success: true, message: 'Year deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Error deleting year', error: err.message });
+  }
+};
+
+
 
 exports.addBranch = async (req, res) => {
   try {
@@ -324,15 +376,6 @@ exports.addAcademicStructure = async (req, res) => {
 
 
 
-// Fetch all years
-exports.getAllYears = async (req, res) => {
-  try {
-    const years = await Year.find();
-    res.status(200).json({ success: true, years });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to fetch years', error: err.message });
-  }
-};
 
 // Fetch all branches
 exports.getAllBranches = async (req, res) => {
