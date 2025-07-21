@@ -454,8 +454,12 @@ exports.getTeacherSubjects = async (req, res) => {
 
 exports.generateAttendanceRegister = async (req, res) => {
   try {
-    // Set response timeout to 5 minutes
-    res.setTimeout(300000);
+    // Set aggressive timeout handling for Render
+    const RENDER_TIMEOUT = 25000; // Render free tier has 30s limit
+    const startTime = Date.now();
+    
+    // Set response timeout
+    res.setTimeout(RENDER_TIMEOUT);
     
     const { year, branch, subject, month } = req.body;
 
@@ -481,19 +485,32 @@ exports.generateAttendanceRegister = async (req, res) => {
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
 
-    console.log('Fetching students and attendance...');
+    console.log(`Starting PDF generation - Time: ${Date.now() - startTime}ms`);
 
-    // Fetch data in parallel
-    const [students, allAttendanceRecords] = await Promise.all([
-      Student.find({ 
-        year: year,
-        department: branch 
-      }).sort('rollNumber').lean(),
-      
-      Attendance.find({
-        subject: { $regex: new RegExp(`^${subject}$`, 'i') },
-        time: { $gte: startDate, $lte: endDate }
-      }).lean()
+    // Check timeout before expensive operations
+    if (Date.now() - startTime > RENDER_TIMEOUT - 5000) {
+      return res.status(408).json({ 
+        success: false, 
+        message: 'Operation approaching timeout limit' 
+      });
+    }
+
+    // Fetch data with timeout and limits
+    const [students, allAttendanceRecords] = await Promise.race([
+      Promise.all([
+        Student.find({ 
+          year: year,
+          department: branch 
+        }).sort('rollNumber').limit(200).lean(), // Limit students for Render
+        
+        Attendance.find({
+          subject: { $regex: new RegExp(`^${subject}$`, 'i') },
+          time: { $gte: startDate, $lte: endDate }
+        }).lean()
+      ]),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Database query timeout')), 8000)
+      )
     ]);
 
     if (students.length === 0) {
@@ -503,7 +520,15 @@ exports.generateAttendanceRegister = async (req, res) => {
       });
     }
 
-    console.log(`Found ${students.length} students and ${allAttendanceRecords.length} attendance records`);
+    // Check if too many students for Render's resources
+    if (students.length > 100) {
+      return res.status(413).json({
+        success: false,
+        message: `Too many students (${students.length}). Please limit to 100 students or upgrade server plan.`
+      });
+    }
+
+    console.log(`Data fetched - Students: ${students.length}, Records: ${allAttendanceRecords.length}, Time: ${Date.now() - startTime}ms`);
 
     // Pre-process attendance data efficiently
     const attendanceByRollNumber = new Map();
@@ -519,76 +544,62 @@ exports.generateAttendanceRegister = async (req, res) => {
       attendanceByRollNumber.get(rollNumber).set(day, record.status.toLowerCase());
     });
 
-    console.log('Starting optimized beautiful PDF generation...');
+    // Check timeout before PDF generation
+    if (Date.now() - startTime > RENDER_TIMEOUT - 15000) {
+      return res.status(408).json({ 
+        success: false, 
+        message: 'Insufficient time remaining for PDF generation' 
+      });
+    }
 
-    // Create PDF with optimized settings
+    console.log(`Starting PDF generation - Time: ${Date.now() - startTime}ms`);
+
+    // Create PDF with minimal settings for speed
     const doc = new PDFDocument({ 
-      margin: 30, 
+      margin: 20, 
       size: 'A4', 
       layout: 'landscape',
-      compress: true,
-      bufferPages: true // Enable page buffering for better performance
+      compress: false, // Disable compression for speed
+      bufferPages: false // Disable buffering for memory efficiency
     });
     
-    const fileName = `attendance_register_${month}.pdf`;
-    const filePath = `./temp/${fileName}`;
+    const fileName = `attendance_${Date.now()}.pdf`;
+    const filePath = path.join('/tmp', fileName); // Use /tmp for Render
     
-    if (!fs.existsSync('./temp')) {
-      fs.mkdirSync('./temp', { recursive: true });
-    }
+    // Ensure temp directory exists
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
 
     const stream = fs.createWriteStream(filePath);
     doc.pipe(stream);
 
-    // Optimized Color Palette
+    // Simplified color palette
     const colors = {
-      primary: '#1e40af',
-      secondary: '#7c3aed',
-      accent: '#059669',
-      warning: '#d97706',
-      danger: '#dc2626',
+      primary: '#2563eb',
       success: '#16a34a',
-      dark: '#1f2937',
+      danger: '#dc2626',
+      text: '#1f2937',
       light: '#f8fafc',
-      white: '#ffffff',
-      border: '#e5e7eb',
-      text: '#374151',
-      muted: '#6b7280'
+      border: '#e5e7eb'
     };
 
-    // BEAUTIFUL BUT OPTIMIZED HEADER
-    const headerHeight = 100;
+    // MINIMAL HEADER - No gradients for speed
+    doc.fillColor(colors.primary).fontSize(20).font('Helvetica-Bold');
+    doc.text('ATTENDANCE REGISTER', 40, 20);
     
-    // Simple gradient background (faster than complex patterns)
-    const gradient = doc.linearGradient(0, 0, doc.page.width, headerHeight);
-    gradient.stop(0, colors.primary).stop(1, colors.secondary);
-    doc.rect(0, 0, doc.page.width, headerHeight).fill(gradient);
+    doc.fillColor(colors.text).fontSize(10).font('Helvetica');
+    doc.text(`Subject: ${subject} | Branch: ${branch} | ${monthNames[selectedMonth]} ${selectedYear}`, 40, 45);
+    
+    // Simple line
+    doc.strokeColor(colors.border).lineWidth(1);
+    doc.moveTo(40, 65).lineTo(doc.page.width - 40, 65).stroke();
 
-    // Header text with simple shadow
-    doc.save();
-    doc.fillColor('rgba(0,0,0,0.2)').fontSize(26).font('Helvetica-Bold');
-    doc.text('ATTENDANCE REGISTER', 42, 22); // Shadow
-    doc.fillColor(colors.white).fontSize(26).font('Helvetica-Bold');
-    doc.text('ATTENDANCE REGISTER', 40, 20); // Main text
-    doc.restore();
+    doc.y = 80;
 
-    // Optimized subtitle section
-    doc.fillColor(colors.white).fontSize(12).font('Helvetica');
-    doc.text(`Subject: ${subject} | Department: ${branch} | Academic Year: ${selectedYear}`, 40, 50);
-    doc.text(`Month: ${monthNames[selectedMonth]} ${selectedYear} | Total Students: ${students.length}`, 40, 68);
-
-    // Simple decorative line
-    doc.strokeColor(colors.white).lineWidth(2);
-    doc.moveTo(40, 85).lineTo(doc.page.width - 40, 85).stroke();
-
-    doc.y = headerHeight + 15;
-
-    // OPTIMIZED STATISTICS SECTION
+    // MINIMAL STATISTICS
     let totalPresent = 0;
-    let totalAbsent = 0;
     let totalMarked = 0;
 
-    // Pre-calculate all statistics
+    // Pre-calculate statistics
     students.forEach(student => {
       const studentAttendance = attendanceByRollNumber.get(student.rollNumber.toString()) || new Map();
       for (let day = 1; day <= daysInMonth; day++) {
@@ -597,7 +608,6 @@ exports.generateAttendanceRegister = async (req, res) => {
           totalPresent++;
           totalMarked++;
         } else if (status === 'absent') {
-          totalAbsent++;
           totalMarked++;
         }
       }
@@ -605,249 +615,190 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     const overallPercentage = totalMarked > 0 ? (totalPresent / totalMarked) * 100 : 0;
 
-    // Simple but beautiful stats cards
-    const cardY = doc.y;
-    const cardWidth = 160;
-    const cardHeight = 50;
+    // Simple stats text
+    doc.fillColor(colors.text).fontSize(10);
+    doc.text(`Overall Attendance: ${overallPercentage.toFixed(1)}% | Total Students: ${students.length}`, 40, doc.y);
+    doc.y += 25;
+
+    // SIMPLIFIED TABLE
+    const pageWidth = doc.page.width - 80;
+    const maxDaysToShow = Math.min(daysInMonth, 20); // Limit days for Render
     
-    // Overall Attendance Card
-    doc.roundedRect(40, cardY, cardWidth, cardHeight, 6)
-       .fill(colors.light)
-       .strokeColor(colors.primary)
-       .lineWidth(2)
-       .stroke();
+    // Calculate column widths
+    const availableWidth = pageWidth - 200; // Reserve space for fixed columns
+    const dayColWidth = Math.max(15, availableWidth / maxDaysToShow);
     
-    doc.fillColor(colors.primary).fontSize(20).font('Helvetica-Bold');
-    doc.text(`${overallPercentage.toFixed(1)}%`, 50, cardY + 8, { width: cardWidth - 20, align: 'center' });
-    doc.fillColor(colors.muted).fontSize(9).font('Helvetica');
-    doc.text('Overall Attendance', 50, cardY + 32, { width: cardWidth - 20, align: 'center' });
+    const headers = ['#', 'Roll', 'Name', ...Array.from({ length: maxDaysToShow }, (_, i) => (i + 1).toString()), 'P', 'A', '%'];
+    const columnWidths = [25, 45, 100, ...Array(maxDaysToShow).fill(dayColWidth), 25, 25, 35];
 
-    // Present Days Card
-    doc.roundedRect(220, cardY, cardWidth, cardHeight, 6)
-       .fill(colors.light)
-       .strokeColor(colors.success)
-       .lineWidth(2)
-       .stroke();
+    // Simple table header
+    doc.rect(40, doc.y, pageWidth, 25).fill(colors.light).stroke();
     
-    doc.fillColor(colors.success).fontSize(20).font('Helvetica-Bold');
-    doc.text(totalPresent.toString(), 230, cardY + 8, { width: cardWidth - 20, align: 'center' });
-    doc.fillColor(colors.muted).fontSize(9).font('Helvetica');
-    doc.text('Total Present Days', 230, cardY + 32, { width: cardWidth - 20, align: 'center' });
-
-    // Absent Days Card
-    doc.roundedRect(400, cardY, cardWidth, cardHeight, 6)
-       .fill(colors.light)
-       .strokeColor(colors.danger)
-       .lineWidth(2)
-       .stroke();
-    
-    doc.fillColor(colors.danger).fontSize(20).font('Helvetica-Bold');
-    doc.text(totalAbsent.toString(), 410, cardY + 8, { width: cardWidth - 20, align: 'center' });
-    doc.fillColor(colors.muted).fontSize(9).font('Helvetica');
-    doc.text('Total Absent Days', 410, cardY + 32, { width: cardWidth - 20, align: 'center' });
-
-    doc.y = cardY + cardHeight + 20;
-
-    // OPTIMIZED TABLE DESIGN
-    const tableStartY = doc.y;
-    const pageWidth = doc.page.width - 60;
-    
-    // Calculate column widths efficiently
-    const baseColWidth = Math.max(18, (pageWidth - 400) / daysInMonth);
-    const headers = ['#', 'Roll No', 'Student Name', ...Array.from({ length: daysInMonth }, (_, i) => (i + 1).toString()), 'P', 'A', '%'];
-    const columnWidths = [30, 60, 130, ...Array(daysInMonth).fill(baseColWidth), 35, 35, 45];
-
-    // Beautiful table header
-    const headerGradient = doc.linearGradient(30, tableStartY, 30, tableStartY + 30);
-    headerGradient.stop(0, colors.primary).stop(1, colors.secondary);
-    doc.roundedRect(30, tableStartY, pageWidth, 30, 6).fill(headerGradient);
-
-    // Header text
-    doc.font('Helvetica-Bold').fillColor(colors.white).fontSize(9);
-    let x = 30;
+    doc.font('Helvetica-Bold').fillColor(colors.text).fontSize(8);
+    let x = 40;
     headers.forEach((header, i) => {
-      doc.text(header, x + 2, tableStartY + 10, { 
+      doc.text(header, x + 2, doc.y + 8, { 
         width: columnWidths[i] - 4, 
         align: 'center'
       });
       x += columnWidths[i];
     });
 
-    doc.y = tableStartY + 30;
+    doc.y += 25;
 
-    // HIGHLY OPTIMIZED STUDENT ROWS
-    const rowHeight = 22;
-    let processedCount = 0;
-
-    for (const student of students) {
-      const studentAttendance = attendanceByRollNumber.get(student.rollNumber.toString()) || new Map();
-      
-      // Calculate statistics once
-      let presentCount = 0;
-      let absentCount = 0;
-      
-      for (let day = 1; day <= daysInMonth; day++) {
-        const status = studentAttendance.get(day);
-        if (status === 'present') presentCount++;
-        else if (status === 'absent') absentCount++;
-      }
-      
-      const totalMarkedStudent = presentCount + absentCount;
-      const percentage = totalMarkedStudent > 0 ? Math.round((presentCount / totalMarkedStudent) * 100) : 0;
-      
-      const currentY = doc.y;
-
-      // Simple alternating background
-      if (processedCount % 2 === 0) {
-        doc.rect(30, currentY, pageWidth, rowHeight).fill(colors.light);
+    // OPTIMIZED STUDENT ROWS - Process in batches
+    const rowHeight = 18;
+    const batchSize = 20;
+    
+    for (let batch = 0; batch < students.length; batch += batchSize) {
+      // Check timeout every batch
+      if (Date.now() - startTime > RENDER_TIMEOUT - 3000) {
+        throw new Error('Timeout approaching during PDF generation');
       }
 
-      // Performance indicator (simple colored left border)
-      const accentColor = percentage >= 75 ? colors.success : 
-                         percentage >= 60 ? colors.warning : colors.danger;
-      doc.rect(30, currentY, 3, rowHeight).fill(accentColor);
-
-      // Student data with optimized rendering
-      x = 30;
-      const textY = currentY + 7;
+      const batchStudents = students.slice(batch, batch + batchSize);
       
-      // Serial number
-      doc.fillColor(colors.muted).fontSize(8).font('Helvetica-Bold');
-      doc.text((processedCount + 1).toString(), x + 2, textY, { 
-        width: columnWidths[0] - 4, align: 'center' 
-      });
-      x += columnWidths[0];
-
-      // Roll Number
-      doc.fillColor(colors.primary).fontSize(8).font('Helvetica-Bold');
-      doc.text(student.rollNumber.toString(), x + 2, textY, { 
-        width: columnWidths[1] - 4, align: 'center' 
-      });
-      x += columnWidths[1];
-
-      // Student name (optimized truncation)
-      doc.fillColor(colors.text).fontSize(8).font('Helvetica');
-      const displayName = student.name.length > 18 ? student.name.substring(0, 18) + '...' : student.name;
-      doc.text(displayName, x + 3, textY, { 
-        width: columnWidths[2] - 6, align: 'left' 
-      });
-      x += columnWidths[2];
-
-      // Daily attendance (simplified but still beautiful)
-      doc.fontSize(7).font('Helvetica-Bold');
-      for (let day = 1; day <= daysInMonth; day++) {
-        const status = studentAttendance.get(day);
+      for (let i = 0; i < batchStudents.length; i++) {
+        const student = batchStudents[i];
+        const studentIndex = batch + i;
+        const studentAttendance = attendanceByRollNumber.get(student.rollNumber.toString()) || new Map();
         
-        if (status === 'present') {
-          doc.fillColor(colors.success).text('P', x + 2, textY, { 
-            width: columnWidths[day + 2] - 4, align: 'center' 
-          });
-        } else if (status === 'absent') {
-          doc.fillColor(colors.danger).text('A', x + 2, textY, { 
-            width: columnWidths[day + 2] - 4, align: 'center' 
-          });
-        } else {
-          doc.fillColor(colors.muted).text('—', x + 2, textY, { 
-            width: columnWidths[day + 2] - 4, align: 'center' 
-          });
+        // Calculate statistics
+        let presentCount = 0;
+        let absentCount = 0;
+        
+        for (let day = 1; day <= maxDaysToShow; day++) {
+          const status = studentAttendance.get(day);
+          if (status === 'present') presentCount++;
+          else if (status === 'absent') absentCount++;
         }
-        x += columnWidths[day + 2];
-      }
-
-      // Summary columns
-      doc.fillColor(colors.success).fontSize(8).font('Helvetica-Bold');
-      doc.text(presentCount.toString(), x + 2, textY, { 
-        width: columnWidths[daysInMonth + 3] - 4, align: 'center' 
-      });
-      x += columnWidths[daysInMonth + 3];
-
-      doc.fillColor(colors.danger);
-      doc.text(absentCount.toString(), x + 2, textY, { 
-        width: columnWidths[daysInMonth + 4] - 4, align: 'center' 
-      });
-      x += columnWidths[daysInMonth + 4];
-
-      // Percentage with color coding
-      const percentColor = percentage >= 75 ? colors.success : 
-                          percentage >= 60 ? colors.warning : colors.danger;
-      doc.fillColor(percentColor).fontSize(8).font('Helvetica-Bold');
-      doc.text(`${percentage}%`, x + 2, textY, { 
-        width: columnWidths[daysInMonth + 5] - 4, align: 'center' 
-      });
-
-      doc.y = currentY + rowHeight;
-      processedCount++;
-
-      // Page break check
-      if (doc.y > doc.page.height - 80) {
-        doc.addPage({ margin: 30, size: 'A4', layout: 'landscape' });
         
-        // Repeat header
-        const newHeaderGradient = doc.linearGradient(30, 40, 30, 70);
-        newHeaderGradient.stop(0, colors.primary).stop(1, colors.secondary);
-        doc.roundedRect(30, 40, pageWidth, 30, 6).fill(newHeaderGradient);
+        const totalMarkedStudent = presentCount + absentCount;
+        const percentage = totalMarkedStudent > 0 ? Math.round((presentCount / totalMarkedStudent) * 100) : 0;
         
-        doc.font('Helvetica-Bold').fillColor(colors.white).fontSize(9);
-        x = 30;
-        headers.forEach((header, i) => {
-          doc.text(header, x + 2, 50, { width: columnWidths[i] - 4, align: 'center' });
-          x += columnWidths[i];
+        const currentY = doc.y;
+
+        // Alternating background
+        if (studentIndex % 2 === 0) {
+          doc.rect(40, currentY, pageWidth, rowHeight).fill(colors.light);
+        }
+
+        // Student data
+        x = 40;
+        const textY = currentY + 6;
+        
+        // Serial number
+        doc.fillColor(colors.text).fontSize(7).font('Helvetica');
+        doc.text((studentIndex + 1).toString(), x + 2, textY, { 
+          width: columnWidths[0] - 4, align: 'center' 
         });
-        doc.y = 75;
+        x += columnWidths[0];
+
+        // Roll Number
+        doc.text(student.rollNumber.toString(), x + 2, textY, { 
+          width: columnWidths[1] - 4, align: 'center' 
+        });
+        x += columnWidths[1];
+
+        // Student name
+        const displayName = student.name.length > 15 ? student.name.substring(0, 15) + '...' : student.name;
+        doc.text(displayName, x + 2, textY, { 
+          width: columnWidths[2] - 4, align: 'left' 
+        });
+        x += columnWidths[2];
+
+        // Daily attendance (simplified)
+        doc.fontSize(6);
+        for (let day = 1; day <= maxDaysToShow; day++) {
+          const status = studentAttendance.get(day);
+          
+          if (status === 'present') {
+            doc.fillColor(colors.success).text('P', x + 2, textY, { 
+              width: columnWidths[day + 2] - 4, align: 'center' 
+            });
+          } else if (status === 'absent') {
+            doc.fillColor(colors.danger).text('A', x + 2, textY, { 
+              width: columnWidths[day + 2] - 4, align: 'center' 
+            });
+          } else {
+            doc.fillColor(colors.text).text('-', x + 2, textY, { 
+              width: columnWidths[day + 2] - 4, align: 'center' 
+            });
+          }
+          x += columnWidths[day + 2];
+        }
+
+        // Summary columns
+        doc.fillColor(colors.success).fontSize(7);
+        doc.text(presentCount.toString(), x + 2, textY, { 
+          width: columnWidths[maxDaysToShow + 3] - 4, align: 'center' 
+        });
+        x += columnWidths[maxDaysToShow + 3];
+
+        doc.fillColor(colors.danger);
+        doc.text(absentCount.toString(), x + 2, textY, { 
+          width: columnWidths[maxDaysToShow + 4] - 4, align: 'center' 
+        });
+        x += columnWidths[maxDaysToShow + 4];
+
+        // Percentage
+        const percentColor = percentage >= 75 ? colors.success : 
+                            percentage >= 60 ? '#d97706' : colors.danger;
+        doc.fillColor(percentColor).fontSize(7);
+        doc.text(`${percentage}%`, x + 2, textY, { 
+          width: columnWidths[maxDaysToShow + 5] - 4, align: 'center' 
+        });
+
+        doc.y = currentY + rowHeight;
+
+        // Page break check (simplified)
+        if (doc.y > doc.page.height - 60) {
+          doc.addPage({ margin: 20, size: 'A4', layout: 'landscape' });
+          doc.y = 40;
+        }
       }
 
-      // Yield control every 20 students for better performance
-      if (processedCount % 20 === 0) {
-        await new Promise(resolve => setImmediate(resolve));
-        console.log(`Processed ${processedCount}/${students.length} students`);
-      }
+      // Yield control between batches
+      await new Promise(resolve => setImmediate(resolve));
+      console.log(`Processed batch ${Math.floor(batch/batchSize) + 1}/${Math.ceil(students.length/batchSize)} - Time: ${Date.now() - startTime}ms`);
     }
 
-    // BEAUTIFUL FOOTER
+    // MINIMAL FOOTER
     doc.y += 15;
+    doc.strokeColor(colors.border).lineWidth(1);
+    doc.moveTo(40, doc.y).lineTo(doc.page.width - 40, doc.y).stroke();
+    
+    doc.fillColor(colors.text).fontSize(8);
+    doc.text(`Generated: ${new Date().toLocaleString('en-IN')} | Students: ${students.length} | Attendance: ${overallPercentage.toFixed(1)}%`, 
+             40, doc.y + 10);
 
-    // Footer separator
-    doc.strokeColor(colors.primary).lineWidth(1);
-    doc.moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
-    doc.y += 10;
-
-    // Summary section
-    doc.roundedRect(30, doc.y, pageWidth, 60, 8)
-       .fill(colors.light)
-       .strokeColor(colors.border)
-       .lineWidth(1)
-       .stroke();
-
-    doc.fillColor(colors.primary).fontSize(12).font('Helvetica-Bold');
-    doc.text('ATTENDANCE SUMMARY', 40, doc.y + 10);
-
-    doc.fillColor(colors.text).fontSize(10).font('Helvetica');
-    doc.text(`Total Students: ${students.length} | Overall Attendance: ${overallPercentage.toFixed(2)}% | Subject: ${subject}`, 40, doc.y + 28);
-    doc.text(`Department: ${branch} | Month: ${monthNames[selectedMonth]} ${selectedYear}`, 40, doc.y + 42);
-
-    // Generation info
-    doc.fillColor(colors.muted).fontSize(8);
-    doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, 40, doc.y + 50);
-    doc.text('Authorized Signature: ________________________', doc.page.width - 220, doc.y + 50);
-
-    console.log('Finalizing optimized beautiful PDF...');
+    console.log(`Finalizing PDF - Time: ${Date.now() - startTime}ms`);
 
     // Finalize PDF
     doc.end();
 
-    // Handle completion with proper timeout
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('PDF generation timeout')), 180000); // Reduced to 3 minutes
-    });
-
+    // Handle completion with race condition for timeout
     const streamPromise = new Promise((resolve, reject) => {
       stream.on('finish', resolve);
       stream.on('error', reject);
     });
 
+    const timeoutPromise = new Promise((_, reject) => {
+      const remaining = RENDER_TIMEOUT - (Date.now() - startTime);
+      setTimeout(() => reject(new Error('Final timeout')), Math.max(1000, remaining - 1000));
+    });
+
     try {
       await Promise.race([streamPromise, timeoutPromise]);
-      console.log('Optimized beautiful PDF generation completed successfully');
+      
+      const finalTime = Date.now() - startTime;
+      console.log(`PDF generation completed in ${finalTime}ms`);
+
+      // Check file exists and has content
+      const stats = await fs.promises.stat(filePath);
+      if (stats.size === 0) {
+        throw new Error('Generated PDF is empty');
+      }
 
       res.download(filePath, fileName, (err) => {
         if (err) {
@@ -857,23 +808,18 @@ exports.generateAttendanceRegister = async (req, res) => {
           }
         }
         
-        // Clean up
-        try {
-          if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-          }
-        } catch (cleanupErr) {
-          console.error('Error cleaning up file:', cleanupErr);
-        }
+        // Clean up - non-blocking
+        fs.unlink(filePath, (cleanupErr) => {
+          if (cleanupErr) console.error('Cleanup error:', cleanupErr);
+        });
       });
 
     } catch (timeoutErr) {
-      console.error('PDF generation timed out:', timeoutErr);
+      console.error('PDF generation timeout:', timeoutErr);
       
+      // Clean up
       try {
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
+        await fs.promises.unlink(filePath);
       } catch (cleanupErr) {
         console.error('Error cleaning up on timeout:', cleanupErr);
       }
@@ -881,20 +827,78 @@ exports.generateAttendanceRegister = async (req, res) => {
       if (!res.headersSent) {
         res.status(408).json({ 
           success: false, 
-          message: 'PDF generation timed out. Please try with a smaller date range.' 
+          message: 'PDF generation timed out. Try reducing the date range or number of students.' 
         });
       }
     }
 
   } catch (error) {
-    console.error('Error generating optimized attendance register:', error);
+    console.error('Error generating attendance register:', error);
     
     if (!res.headersSent) {
       res.status(500).json({ 
         success: false, 
         message: 'Error generating attendance register',
-        error: error.message 
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
       });
     }
+  }
+};
+
+// Additional helper function for batch processing large datasets
+exports.generateAttendanceRegisterBatch = async (req, res) => {
+  try {
+    const { year, branch, subject, month, batchNumber = 1, studentsPerBatch = 50 } = req.body;
+    
+    // This version processes students in smaller batches across multiple requests
+    // Frontend can call this multiple times and combine results
+    
+    const [yearStr, monthStr] = month.split('-');
+    const selectedYear = parseInt(yearStr);
+    const selectedMonth = parseInt(monthStr) - 1;
+    
+    const startDate = new Date(selectedYear, selectedMonth, 1);
+    const endDate = new Date(selectedYear, selectedMonth + 1, 0);
+
+    const totalStudents = await Student.countDocuments({ 
+      year: year,
+      department: branch 
+    });
+
+    const skip = (batchNumber - 1) * studentsPerBatch;
+    const students = await Student.find({ 
+      year: year,
+      department: branch 
+    })
+    .sort('rollNumber')
+    .skip(skip)
+    .limit(studentsPerBatch)
+    .lean();
+
+    const attendanceRecords = await Attendance.find({
+      subject: { $regex: new RegExp(`^${subject}$`, 'i') },
+      time: { $gte: startDate, $lte: endDate },
+      rollNumber: { $in: students.map(s => s.rollNumber) }
+    }).lean();
+
+    res.json({
+      success: true,
+      students,
+      attendanceRecords,
+      batchInfo: {
+        currentBatch: batchNumber,
+        totalBatches: Math.ceil(totalStudents / studentsPerBatch),
+        totalStudents,
+        studentsInBatch: students.length
+      }
+    });
+
+  } catch (error) {
+    console.error('Error in batch processing:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error processing batch',
+      error: error.message 
+    });
   }
 };
