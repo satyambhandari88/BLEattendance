@@ -452,7 +452,6 @@ exports.getTeacherSubjects = async (req, res) => {
 
 
 
-
 exports.generateAttendanceRegister = async (req, res) => {
   try {
     const { year, branch, subject, month } = req.body;
