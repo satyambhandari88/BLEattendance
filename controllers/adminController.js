@@ -1067,19 +1067,26 @@ exports.generateAttendanceRegister = async (req, res) => {
 // Add to adminController.js
 exports.generateSubjectWiseReport = async (req, res) => {
   try {
+    // Input validation
     const { year, branch, startDate, endDate } = req.body;
+    if (!year || !branch || !startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'All fields (year, branch, startDate, endDate) are required'
+      });
+    }
 
-    // Convert dates and include full day for end date
+    // Date processing
     const start = new Date(startDate);
     const end = new Date(endDate);
     end.setHours(23, 59, 59, 999);
 
-    // Find classes with case-insensitive branch matching
+    // Get unique subjects from classes
     const classes = await Class.find({
       year: year.toString(),
       branch: { $regex: new RegExp(branch, 'i') },
       date: { $gte: start, $lte: end }
-    });
+    }).lean();
 
     if (classes.length === 0) {
       return res.status(404).json({
@@ -1088,11 +1095,19 @@ exports.generateSubjectWiseReport = async (req, res) => {
       });
     }
 
-    // Get all students in the branch/year
-    const students = await Student.find({
-      year: year.toString(),
-      department: { $regex: new RegExp(branch, 'i') }
-    }).sort('rollNumber');
+    const subjects = [...new Set(classes.map(c => c.subject))];
+    const classIds = classes.map(c => c._id);
+
+    // Get students and attendance in parallel
+    const [students, attendanceRecords] = await Promise.all([
+      Student.find({
+        year: year.toString(),
+        department: { $regex: new RegExp(branch, 'i') }
+      }).sort('rollNumber').lean(),
+      Attendance.find({
+        classId: { $in: classIds }
+      }).lean()
+    ]);
 
     if (students.length === 0) {
       return res.status(404).json({
@@ -1101,9 +1116,11 @@ exports.generateSubjectWiseReport = async (req, res) => {
       });
     }
 
-    // Get attendance records for these classes
-    const attendanceRecords = await Attendance.find({
-      classId: { $in: classes.map(c => c._id) }
+    // Create attendance map for faster lookup
+    const attendanceMap = new Map();
+    attendanceRecords.forEach(record => {
+      const key = `${record.rollNumber}_${record.classId}`;
+      attendanceMap.set(key, record.status);
     });
 
     // Process report data
@@ -1116,26 +1133,29 @@ exports.generateSubjectWiseReport = async (req, res) => {
         totalClasses: 0
       };
 
-      classes.forEach(cls => {
-        const attendance = attendanceRecords.find(
-          a => a.classId.equals(cls._id) && a.rollNumber === student.rollNumber
-        );
-        
-        if (!studentReport.subjects[cls.subject]) {
-          studentReport.subjects[cls.subject] = { present: 0, total: 0 };
-        }
+      // Initialize subject counters
+      subjects.forEach(subject => {
+        studentReport.subjects[subject] = { present: 0, total: 0 };
+      });
 
-        studentReport.subjects[cls.subject].total++;
-        studentReport.totalClasses++;
+      // Process each class
+      classes.forEach(classInfo => {
+        const key = `${student.rollNumber}_${classInfo._id}`;
+        const status = attendanceMap.get(key);
         
-        if (attendance?.status === 'Present') {
-          studentReport.subjects[cls.subject].present++;
-          studentReport.totalPresent++;
+        if (status) {
+          studentReport.subjects[classInfo.subject].total++;
+          studentReport.totalClasses++;
+          
+          if (status === 'Present') {
+            studentReport.subjects[classInfo.subject].present++;
+            studentReport.totalPresent++;
+          }
         }
       });
 
       // Calculate percentages
-      Object.keys(studentReport.subjects).forEach(subject => {
+      subjects.forEach(subject => {
         const sub = studentReport.subjects[subject];
         studentReport[subject] = sub.total > 0 
           ? `${Math.round((sub.present / sub.total) * 100)}%` 
@@ -1152,42 +1172,46 @@ exports.generateSubjectWiseReport = async (req, res) => {
 
     // Generate PDF
     const doc = new PDFDocument({ margin: 25, size: 'A4', layout: 'landscape' });
-    const fileName = `subject_wise_report_${year}_${branch}.pdf`;
-    const filePath = `./temp/${fileName}`;
+    const fileName = `attendance_report_${year}_${branch}_${Date.now()}.pdf`;
+    const tempDir = path.join(__dirname, '../../temp');
     
-    if (!fs.existsSync('./temp')) {
-      fs.mkdirSync('./temp', { recursive: true });
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
     }
 
+    const filePath = path.join(tempDir, fileName);
     const stream = fs.createWriteStream(filePath);
     doc.pipe(stream);
 
-    // Header
+    // PDF Header
     doc.fillColor('#2563eb').rect(0, 0, doc.page.width, 80).fill();
     doc.fillColor('#ffffff')
        .fontSize(16).font('Helvetica-Bold')
-       .text('KAMLA NEHRU INSTITUTE OF TECHNOLOGY', 25, 20, { align: 'center' })
-       .fontSize(14)
-       .text('SUBJECT-WISE ATTENDANCE REPORT', 25, 40, { align: 'center' })
+       .text('ATTENDANCE REPORT', { align: 'center', y: 30 })
+       .fontSize(12)
+       .text(`${year} Year | ${branch}`, { align: 'center', y: 50 })
        .fontSize(10)
-       .text(`${year} Year | ${branch} | ${formatDate(start)} to ${formatDate(end)}`, 25, 60, { align: 'center' });
+       .text(`${formatDate(start)} to ${formatDate(end)}`, { align: 'center', y: 65 });
 
-    // Table setup
+    // Table Setup
     const startY = 100;
     const columnWidths = [60, 120, ...Array(subjects.length).fill(60), 80];
-    const headers = ['Roll No', 'Name', ...subjects, 'Avg Attendance'];
+    const headers = ['Roll No', 'Name', ...subjects, 'Average'];
 
-    // Draw table header
+    // Table Header
     doc.fillColor('#2563eb').rect(25, startY, doc.page.width - 50, 20).fill();
     doc.fillColor('#ffffff').fontSize(10).font('Helvetica-Bold');
     
     let x = 25;
     headers.forEach((header, i) => {
-      doc.text(header, x + 5, startY + 5, { width: columnWidths[i] - 10, align: 'center' });
+      doc.text(header, x + 5, startY + 5, { 
+        width: columnWidths[i] - 10, 
+        align: 'center' 
+      });
       x += columnWidths[i];
     });
 
-    // Draw student rows
+    // Student Rows
     doc.fontSize(9).font('Helvetica');
     let y = startY + 20;
     
@@ -1199,10 +1223,16 @@ exports.generateSubjectWiseReport = async (req, res) => {
 
       x = 25;
       doc.fillColor('#1e293b')
-         .text(student.rollNumber, x + 5, y + 5, { width: columnWidths[0] - 10, align: 'center' });
+         .text(student.rollNumber, x + 5, y + 5, { 
+           width: columnWidths[0] - 10, 
+           align: 'center' 
+         });
       x += columnWidths[0];
 
-      doc.text(student.name, x + 5, y + 5, { width: columnWidths[1] - 10, align: 'left' });
+      doc.text(student.name, x + 5, y + 5, { 
+        width: columnWidths[1] - 10, 
+        align: 'left' 
+      });
       x += columnWidths[1];
 
       // Subject percentages
@@ -1212,7 +1242,8 @@ exports.generateSubjectWiseReport = async (req, res) => {
         
         if (percentage !== 'N/A') {
           const percentValue = parseInt(percentage);
-          color = percentValue >= 75 ? '#16a34a' : percentValue >= 60 ? '#d97706' : '#dc2626';
+          color = percentValue >= 75 ? '#16a34a' : 
+                 percentValue >= 60 ? '#d97706' : '#dc2626';
         }
         
         doc.fillColor(color).text(percentage, x + 5, y + 5, { 
@@ -1235,22 +1266,25 @@ exports.generateSubjectWiseReport = async (req, res) => {
       if (y > doc.page.height - 50 && index < reportData.length - 1) {
         doc.addPage({ margin: 25, size: 'A4', layout: 'landscape' });
         
-        // Draw header on new page
+        // New page header
         doc.fillColor('#2563eb').rect(0, 0, doc.page.width, 60).fill();
         doc.fillColor('#ffffff')
            .fontSize(12).font('Helvetica-Bold')
-           .text('SUBJECT-WISE ATTENDANCE REPORT (Continued)', 25, 15, { align: 'center' })
+           .text('ATTENDANCE REPORT (Continued)', { align: 'center', y: 15 })
            .fontSize(9)
-           .text(`${year} Year | ${branch} | Page ${doc.page.number}`, 25, 35, { align: 'center' });
+           .text(`Page ${doc.page.number}`, { align: 'center', y: 35 });
         
-        // Draw table header again
+        // Table header again
         y = 60;
         doc.fillColor('#2563eb').rect(25, y, doc.page.width - 50, 20).fill();
         doc.fillColor('#ffffff').fontSize(10).font('Helvetica-Bold');
         
         x = 25;
         headers.forEach((header, i) => {
-          doc.text(header, x + 5, y + 5, { width: columnWidths[i] - 10, align: 'center' });
+          doc.text(header, x + 5, y + 5, { 
+            width: columnWidths[i] - 10, 
+            align: 'center' 
+          });
           x += columnWidths[i];
         });
         
@@ -1261,35 +1295,35 @@ exports.generateSubjectWiseReport = async (req, res) => {
 
     doc.end();
 
-    // Wait for PDF generation to complete
+    // Wait for PDF generation
     await new Promise((resolve, reject) => {
       stream.on('finish', resolve);
       stream.on('error', reject);
     });
 
-    // Send the file
+    // Send file
     res.download(filePath, fileName, (err) => {
-      if (err) {
-        console.error('Error sending file:', err);
-        if (!res.headersSent) {
-          res.status(500).json({ success: false, message: 'Error sending file' });
-        }
-      }
-      
-      // Clean up temporary file
+      // Clean up
       try {
         fs.unlinkSync(filePath);
       } catch (cleanupErr) {
         console.error('Error cleaning up file:', cleanupErr);
       }
+      
+      if (err && !res.headersSent) {
+        res.status(500).json({ 
+          success: false, 
+          message: 'Error sending file' 
+        });
+      }
     });
 
   } catch (error) {
-    console.error('Error generating subject-wise report:', error);
+    console.error('Report generation error:', error);
     if (!res.headersSent) {
       res.status(500).json({ 
         success: false, 
-        message: 'Error generating report',
+        message: 'Internal server error',
         error: error.message 
       });
     }
@@ -1298,7 +1332,7 @@ exports.generateSubjectWiseReport = async (req, res) => {
 
 // Helper function to format dates
 function formatDate(date) {
-  return new Date(date).toLocaleDateString('en-GB', {
+  return date.toLocaleDateString('en-GB', {
     day: '2-digit',
     month: 'short',
     year: 'numeric'
