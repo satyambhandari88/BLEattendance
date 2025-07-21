@@ -530,6 +530,48 @@ exports.getAcademicStructures = async (req, res) => {
 };
 
 
+exports.updateAcademicStructure = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { subjects } = req.body;
+
+    const structure = await AcademicStructure.findByIdAndUpdate(
+      id,
+      { subjects },
+      { new: true }
+    )
+    .populate('year branch subjects');
+
+    if (!structure) {
+      return res.status(404).json({ message: 'Structure not found' });
+    }
+
+    res.status(200).json({ message: 'Structure updated', structure });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error updating structure' });
+  }
+};
+
+
+exports.deleteAcademicStructure = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const structure = await AcademicStructure.findByIdAndDelete(id);
+
+    if (!structure) {
+      return res.status(404).json({ message: 'Structure not found' });
+    }
+
+    res.status(200).json({ message: 'Structure deleted' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error deleting structure' });
+  }
+};
+
+
 // Get subjects assigned to teacher for specific year and branch
 
 exports.getTeacherSubjects = async (req, res) => {
