@@ -456,7 +456,7 @@ exports.getTeacherSubjects = async (req, res) => {
 exports.generateAttendanceRegister = async (req, res) => {
   try {
     const { year, branch, subject, month } = req.body;
-    
+
     // Validate inputs
     if (!year || !branch || !subject || !month) {
       return res.status(400).json({ 
@@ -465,20 +465,12 @@ exports.generateAttendanceRegister = async (req, res) => {
       });
     }
 
-    // Parse month and year (format: YYYY-MM)
+    // Parse month into date range (YYYY-MM)
     const [yearStr, monthStr] = month.split('-');
-    const selectedYear = parseInt(yearStr);
-    const selectedMonth = parseInt(monthStr) - 1; // JavaScript months are 0-indexed
-    
-    // Validate month format
-    if (isNaN(selectedYear) || isNaN(selectedMonth) || selectedMonth < 0 || selectedMonth > 11) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid month format. Use YYYY-MM' 
-      });
-    }
+    const startDate = new Date(yearStr, monthStr - 1, 1); // First day of month
+    const endDate = new Date(yearStr, monthStr, 0); // Last day of month
 
-    // Get all students for the selected year and branch
+    // Find students matching year & branch
     const students = await Student.find({ 
       year: year,
       department: branch 
@@ -491,17 +483,27 @@ exports.generateAttendanceRegister = async (req, res) => {
       });
     }
 
-    // Get number of days in the selected month
-    const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate();
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                       'July', 'August', 'September', 'October', 'November', 'December'];
+    // Get ALL attendance records for this subject (no className filter)
+    const attendanceQuery = {
+      subject: { $regex: new RegExp(`^${subject}$`, 'i') }, // Case-insensitive match
+      date: { $gte: startDate, $lte: endDate }
+    };
 
-    // Prepare the PDF document with custom page size for better layout
-    const doc = new PDFDocument({ 
-      margin: 40,
-      size: 'A4',
-      layout: 'landscape' // Better for wide tables
+    // Fetch all matching attendance records at once (optimized)
+    const allAttendanceRecords = await Attendance.find(attendanceQuery);
+
+    // Group attendance by student for faster lookup
+    const attendanceByStudent = new Map();
+    allAttendanceRecords.forEach(record => {
+      const studentId = record.student.toString();
+      if (!attendanceByStudent.has(studentId)) {
+        attendanceByStudent.set(studentId, []);
+      }
+      attendanceByStudent.get(studentId).push(record);
     });
+
+    // Generate PDF (same as before, but now includes all classes of the subject)
+    const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
     
     const fileName = `attendance_register_${month}.pdf`;
     const filePath = `./temp/${fileName}`;
