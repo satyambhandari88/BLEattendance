@@ -272,14 +272,16 @@ exports.fetchClasses=async (req, res) => {
 
 exports.updateClass = async (req, res) => {
   try {
-    const { id } = req.params;
-    const updated = await ClassModel.findByIdAndUpdate(id, req.body, { new: true });
+    console.log('Updating class:', req.params.id);
+    const updated = await ClassModel.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!updated) return res.status(404).json({ message: 'Class not found' });
     res.json({ message: 'Class updated successfully', class: updated });
   } catch (err) {
+    console.error('Error updating class:', err);
     res.status(500).json({ message: 'Update failed', error: err.message });
   }
 };
+
 
 exports.deleteClass = async (req, res) => {
   try {
