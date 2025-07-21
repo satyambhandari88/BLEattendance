@@ -52,9 +52,9 @@ router.post('/generate-register', generateAttendanceRegister);
 
 
 
-router.put('/:id', updateYear);
-router.delete('/:id', deleteYear);
-router.put('/:id', updateBranch);
-router.delete('/:id', deleteBranch);
+router.put('/years/:id', updateYear);
+router.delete('/years/:id', deleteYear);
+router.put('/branches/:id', updateBranch);
+router.delete('/branches/:id', deleteBranch);
 
 module.exports = router;
