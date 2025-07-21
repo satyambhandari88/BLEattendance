@@ -470,13 +470,12 @@ exports.generateAttendanceRegister = async (req, res) => {
     // Parse month into date range (YYYY-MM)
     const [yearStr, monthStr] = month.split('-');
     const selectedYear = parseInt(yearStr);
-    const selectedMonth = parseInt(monthStr) - 1; // JavaScript months are 0-indexed
+    const selectedMonth = parseInt(monthStr) - 1;
     
     const startDate = new Date(selectedYear, selectedMonth, 1);
     const endDate = new Date(selectedYear, selectedMonth + 1, 0);
     const daysInMonth = endDate.getDate();
 
-    // Month names for display
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December'
@@ -484,17 +483,17 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     console.log('Fetching students and attendance...');
 
-    // OPTIMIZATION 1: Use Promise.all to fetch data in parallel
+    // Fetch data in parallel
     const [students, allAttendanceRecords] = await Promise.all([
       Student.find({ 
         year: year,
         department: branch 
-      }).sort('rollNumber').lean(), // Use .lean() for better performance
+      }).sort('rollNumber').lean(),
       
       Attendance.find({
         subject: { $regex: new RegExp(`^${subject}$`, 'i') },
         time: { $gte: startDate, $lte: endDate }
-      }).lean() // Use .lean() for better performance
+      }).lean()
     ]);
 
     if (students.length === 0) {
@@ -506,7 +505,7 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     console.log(`Found ${students.length} students and ${allAttendanceRecords.length} attendance records`);
 
-    // OPTIMIZATION 2: Pre-process all attendance data
+    // Pre-process attendance data
     const attendanceByRollNumber = new Map();
     const dailyAttendanceStats = new Map();
     
@@ -515,16 +514,15 @@ exports.generateAttendanceRegister = async (req, res) => {
       const recordDate = new Date(record.time);
       const day = recordDate.getDate();
       
-      // Group by rollNumber
       if (!attendanceByRollNumber.has(rollNumber)) {
         attendanceByRollNumber.set(rollNumber, new Map());
       }
       attendanceByRollNumber.get(rollNumber).set(day, record.status.toLowerCase());
       
-      // Calculate daily stats
       if (!dailyAttendanceStats.has(day)) {
-        dailyAttendanceStats.set(day, { present: 0, absent: 0 });
+        dailyAttendanceStats.set(day, { present: 0, absent: 0, total: 0 });
       }
+      dailyAttendanceStats.get(day).total++;
       if (record.status.toLowerCase() === 'present') {
         dailyAttendanceStats.get(day).present++;
       } else {
@@ -532,81 +530,234 @@ exports.generateAttendanceRegister = async (req, res) => {
       }
     });
 
-    console.log('Starting PDF generation...');
+    console.log('Starting beautiful PDF generation...');
 
-    // Generate PDF with streaming to avoid memory issues
+    // Create PDF with premium settings
     const doc = new PDFDocument({ 
-      margin: 40, 
+      margin: 30, 
       size: 'A4', 
       layout: 'landscape',
-      compress: true // Compress PDF to reduce size
+      compress: true
     });
     
     const fileName = `attendance_register_${month}.pdf`;
     const filePath = `./temp/${fileName}`;
     
-    // Ensure temp directory exists
     if (!fs.existsSync('./temp')) {
       fs.mkdirSync('./temp', { recursive: true });
     }
 
-    // OPTIMIZATION 3: Use streaming write
     const stream = fs.createWriteStream(filePath);
     doc.pipe(stream);
 
-    // Define colors (simplified for performance)
+    // Premium Color Palette
     const colors = {
-      primary: '#2563eb',
-      secondary: '#64748b',
-      success: '#16a34a',
-      danger: '#dc2626',
-      background: '#f8fafc',
-      border: '#e2e8f0',
-      text: '#1e293b'
+      primary: '#1e40af',      // Deep blue
+      secondary: '#7c3aed',    // Purple
+      accent: '#059669',       // Emerald
+      warning: '#d97706',      // Amber
+      danger: '#dc2626',       // Red
+      success: '#16a34a',      // Green
+      dark: '#1f2937',         // Dark gray
+      light: '#f8fafc',        // Light gray
+      white: '#ffffff',
+      border: '#e5e7eb',       // Border gray
+      text: '#374151',         // Text gray
+      muted: '#6b7280',        // Muted text
+      gradient1: '#667eea',    // Gradient start
+      gradient2: '#764ba2',    // Gradient end
+      shadow: 'rgba(0,0,0,0.1)'
     };
 
-    // SIMPLIFIED HEADER (faster rendering)
-    doc.rect(0, 0, doc.page.width, 80).fill(colors.primary);
-    doc.fillColor('#ffffff').fontSize(20).font('Helvetica-Bold')
-       .text('ATTENDANCE REGISTER', 40, 25);
-    doc.fontSize(12).font('Helvetica')
-       .text(`${subject} - ${branch} - ${monthNames[selectedMonth]} ${selectedYear}`, 40, 50);
+    // Helper function to draw gradient background
+    const drawGradientRect = (x, y, width, height, color1, color2) => {
+      const gradient = doc.linearGradient(x, y, x + width, y);
+      gradient.stop(0, color1).stop(1, color2);
+      doc.rect(x, y, width, height).fill(gradient);
+    };
 
-    doc.y = 100;
+    // Helper function to draw rounded rectangle
+    const drawRoundedRect = (x, y, width, height, radius = 5) => {
+      doc.roundedRect(x, y, width, height, radius);
+    };
 
-    // SIMPLIFIED TABLE LAYOUT
+    // STUNNING HEADER SECTION
+    const headerHeight = 120;
+    
+    // Header gradient background
+    drawGradientRect(0, 0, doc.page.width, headerHeight, colors.gradient1, colors.gradient2);
+    
+    // Add subtle pattern overlay
+    doc.save();
+    doc.opacity(0.1);
+    for (let i = 0; i < doc.page.width; i += 40) {
+      for (let j = 0; j < headerHeight; j += 40) {
+        doc.circle(i, j, 2).fill(colors.white);
+      }
+    }
+    doc.restore();
+
+    // Main title with shadow effect
+    doc.save();
+    doc.fillColor('rgba(0,0,0,0.3)').fontSize(28).font('Helvetica-Bold');
+    doc.text('ATTENDANCE REGISTER', 42, 22); // Shadow
+    doc.fillColor(colors.white).fontSize(28).font('Helvetica-Bold');
+    doc.text('ATTENDANCE REGISTER', 40, 20); // Main text
+    doc.restore();
+
+    // Beautiful subtitle section
+    doc.fillColor(colors.white).opacity(0.9);
+    doc.fontSize(14).font('Helvetica');
+    doc.text(`Subject: ${subject}`, 40, 55);
+    doc.text(`Department: ${branch}`, 250, 55);
+    doc.text(`Academic Year: ${selectedYear}`, 450, 55);
+    doc.text(`Month: ${monthNames[selectedMonth]} ${selectedYear}`, 40, 75);
+    doc.text(`Total Students: ${students.length}`, 250, 75);
+    doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 450, 75);
+
+    // Decorative line
+    doc.strokeColor(colors.white).opacity(0.7).lineWidth(2);
+    doc.moveTo(40, 100).lineTo(doc.page.width - 40, 100).stroke();
+
+    doc.y = headerHeight + 20;
+
+    // STATISTICS DASHBOARD
+    const dashboardY = doc.y;
+    let totalPresent = 0;
+    let totalAbsent = 0;
+    let totalMarked = 0;
+
+    // Calculate overall statistics
+    students.forEach(student => {
+      const studentAttendance = attendanceByRollNumber.get(student.rollNumber.toString()) || new Map();
+      for (let day = 1; day <= daysInMonth; day++) {
+        const status = studentAttendance.get(day);
+        if (status === 'present') {
+          totalPresent++;
+          totalMarked++;
+        } else if (status === 'absent') {
+          totalAbsent++;
+          totalMarked++;
+        }
+      }
+    });
+
+    const overallPercentage = totalMarked > 0 ? (totalPresent / totalMarked) * 100 : 0;
+
+    // Statistics cards
+    const cardWidth = 150;
+    const cardHeight = 60;
+    const cardSpacing = 20;
+    let cardX = 40;
+
+    // Overall Attendance Card
+    drawRoundedRect(cardX, dashboardY, cardWidth, cardHeight, 8);
+    doc.fill(colors.light);
+    doc.strokeColor(colors.primary).lineWidth(1).stroke();
+    
+    doc.fillColor(colors.primary).fontSize(24).font('Helvetica-Bold');
+    doc.text(`${overallPercentage.toFixed(1)}%`, cardX + 10, dashboardY + 10, { width: cardWidth - 20, align: 'center' });
+    doc.fillColor(colors.muted).fontSize(10).font('Helvetica');
+    doc.text('Overall Attendance', cardX + 10, dashboardY + 38, { width: cardWidth - 20, align: 'center' });
+    cardX += cardWidth + cardSpacing;
+
+    // Present Days Card
+    drawRoundedRect(cardX, dashboardY, cardWidth, cardHeight, 8);
+    doc.fill(colors.light);
+    doc.strokeColor(colors.success).lineWidth(1).stroke();
+    
+    doc.fillColor(colors.success).fontSize(24).font('Helvetica-Bold');
+    doc.text(totalPresent.toString(), cardX + 10, dashboardY + 10, { width: cardWidth - 20, align: 'center' });
+    doc.fillColor(colors.muted).fontSize(10).font('Helvetica');
+    doc.text('Total Present Days', cardX + 10, dashboardY + 38, { width: cardWidth - 20, align: 'center' });
+    cardX += cardWidth + cardSpacing;
+
+    // Absent Days Card
+    drawRoundedRect(cardX, dashboardY, cardWidth, cardHeight, 8);
+    doc.fill(colors.light);
+    doc.strokeColor(colors.danger).lineWidth(1).stroke();
+    
+    doc.fillColor(colors.danger).fontSize(24).font('Helvetica-Bold');
+    doc.text(totalAbsent.toString(), cardX + 10, dashboardY + 10, { width: cardWidth - 20, align: 'center' });
+    doc.fillColor(colors.muted).fontSize(10).font('Helvetica');
+    doc.text('Total Absent Days', cardX + 10, dashboardY + 38, { width: cardWidth - 20, align: 'center' });
+    cardX += cardWidth + cardSpacing;
+
+    // Working Days Card
+    drawRoundedRect(cardX, dashboardY, cardWidth, cardHeight, 8);
+    doc.fill(colors.light);
+    doc.strokeColor(colors.secondary).lineWidth(1).stroke();
+    
+    doc.fillColor(colors.secondary).fontSize(24).font('Helvetica-Bold');
+    doc.text(daysInMonth.toString(), cardX + 10, dashboardY + 10, { width: cardWidth - 20, align: 'center' });
+    doc.fillColor(colors.muted).fontSize(10).font('Helvetica');
+    doc.text('Total Days', cardX + 10, dashboardY + 38, { width: cardWidth - 20, align: 'center' });
+
+    doc.y = dashboardY + cardHeight + 30;
+
+    // ATTENDANCE TABLE WITH PREMIUM STYLING
     const tableStartY = doc.y;
-    const pageWidth = doc.page.width - 80;
+    const pageWidth = doc.page.width - 60;
     
-    // Calculate column widths (optimized)
-    const dayColWidth = Math.min(20, (pageWidth - 300) / daysInMonth);
-    const headers = ['Roll No', 'Name', ...Array.from({ length: daysInMonth }, (_, i) => (i + 1).toString()), 'P', 'A', '%'];
-    const columnWidths = [60, 120, ...Array(daysInMonth).fill(dayColWidth), 25, 25, 35];
+    // Calculate optimal column widths
+    const baseColWidth = 18;
+    const dayColWidth = Math.max(baseColWidth, (pageWidth - 400) / daysInMonth);
+    const headers = ['#', 'Roll No', 'Student Name', ...Array.from({ length: daysInMonth }, (_, i) => (i + 1).toString()), 'Present', 'Absent', 'Percentage'];
+    const columnWidths = [30, 70, 140, ...Array(daysInMonth).fill(dayColWidth), 45, 45, 55];
 
-    // Table header
-    doc.rect(40, tableStartY, pageWidth, 25).fill(colors.primary);
-    doc.font('Helvetica-Bold').fillColor('#ffffff').fontSize(9);
+    // Beautiful table header with gradient
+    const headerRect = drawRoundedRect(30, tableStartY, pageWidth, 35, 8);
+    drawGradientRect(30, tableStartY, pageWidth, 35, colors.primary, colors.secondary);
     
-    let x = 40;
+    // Header shadow effect
+    doc.save();
+    doc.fillColor(colors.shadow);
+    drawRoundedRect(32, tableStartY + 2, pageWidth, 35, 8);
+    doc.fill();
+    doc.restore();
+
+    // Header text with beautiful typography
+    doc.font('Helvetica-Bold').fillColor(colors.white).fontSize(10);
+    
+    let x = 30;
     headers.forEach((header, i) => {
-      doc.text(header, x + 2, tableStartY + 8, { 
-        width: columnWidths[i] - 4, 
-        align: 'center' 
-      });
+      const textY = tableStartY + 12;
+      if (i < 3 || i >= headers.length - 3) {
+        // Main headers
+        doc.text(header, x + 3, textY, { 
+          width: columnWidths[i] - 6, 
+          align: 'center',
+          baseline: 'middle'
+        });
+      } else {
+        // Day numbers with better formatting
+        const dayNum = parseInt(header);
+        const date = new Date(selectedYear, selectedMonth, dayNum);
+        const dayName = date.toLocaleDateString('en-US', { weekday: 'short' }).substring(0, 1);
+        
+        doc.fontSize(9).text(header, x + 3, textY - 2, { 
+          width: columnWidths[i] - 6, 
+          align: 'center' 
+        });
+        doc.fontSize(7).text(dayName, x + 3, textY + 8, { 
+          width: columnWidths[i] - 6, 
+          align: 'center' 
+        });
+      }
       x += columnWidths[i];
     });
 
-    doc.y = tableStartY + 25;
+    doc.y = tableStartY + 35;
 
-    // OPTIMIZATION 4: Batch process students and use simpler styling
-    let totalPresentDays = 0;
-    let totalPossibleDays = 0;
+    // Student rows with alternating colors and hover effects
+    let rowIndex = 0;
+    const rowHeight = 28;
 
     for (let i = 0; i < students.length; i++) {
       const student = students[i];
       const studentAttendance = attendanceByRollNumber.get(student.rollNumber.toString()) || new Map();
       
-      // Calculate stats
+      // Calculate student statistics
       let presentCount = 0;
       let absentCount = 0;
       
@@ -616,115 +767,208 @@ exports.generateAttendanceRegister = async (req, res) => {
         else if (status === 'absent') absentCount++;
       }
       
-      const totalMarked = presentCount + absentCount;
-      const percentage = totalMarked > 0 ? Math.round((presentCount / totalMarked) * 100) : 0;
+      const totalMarkedStudent = presentCount + absentCount;
+      const percentage = totalMarkedStudent > 0 ? Math.round((presentCount / totalMarkedStudent) * 100) : 0;
       
-      totalPresentDays += presentCount;
-      totalPossibleDays += Math.max(totalMarked, 1);
-
       const currentY = doc.y;
-      const rowHeight = 20;
 
-      // Simple alternating background
+      // Beautiful row background with subtle gradients
       if (i % 2 === 0) {
-        doc.rect(40, currentY, pageWidth, rowHeight).fill('#f9f9f9');
+        drawRoundedRect(30, currentY, pageWidth, rowHeight, 4);
+        doc.fill(colors.light);
+      } else {
+        drawRoundedRect(30, currentY, pageWidth, rowHeight, 4);
+        doc.fill(colors.white);
       }
 
-      // Student data (simplified styling for speed)
-      x = 40;
-      doc.fillColor(colors.text).fontSize(8).font('Helvetica');
+      // Add subtle border
+      doc.strokeColor(colors.border).lineWidth(0.5);
+      drawRoundedRect(30, currentY, pageWidth, rowHeight, 4);
+      doc.stroke();
+
+      // Performance-based row accent (left border)
+      let accentColor = colors.success;
+      if (percentage < 60) accentColor = colors.danger;
+      else if (percentage < 75) accentColor = colors.warning;
       
-      // Roll Number
-      doc.text(student.rollNumber.toString(), x + 2, currentY + 6, { 
-        width: columnWidths[0] - 4, align: 'center' 
+      doc.rect(30, currentY, 4, rowHeight).fill(accentColor);
+
+      // Student data with beautiful typography
+      x = 30;
+      const textY = currentY + (rowHeight / 2) - 4;
+      
+      // Serial number
+      doc.fillColor(colors.muted).fontSize(9).font('Helvetica-Bold');
+      doc.text((i + 1).toString(), x + 3, textY, { 
+        width: columnWidths[0] - 6, align: 'center' 
       });
       x += columnWidths[0];
 
-      // Name (truncated for performance)
-      const displayName = student.name.length > 18 ? student.name.substring(0, 18) + '...' : student.name;
-      doc.text(displayName, x + 2, currentY + 6, { 
-        width: columnWidths[1] - 4, align: 'left' 
+      // Roll Number with styling
+      doc.fillColor(colors.primary).fontSize(9).font('Helvetica-Bold');
+      doc.text(student.rollNumber.toString(), x + 3, textY, { 
+        width: columnWidths[1] - 6, align: 'center' 
       });
       x += columnWidths[1];
 
-      // Daily attendance (simplified display)
+      // Student name with proper truncation
+      doc.fillColor(colors.text).fontSize(9).font('Helvetica');
+      const displayName = student.name.length > 20 ? student.name.substring(0, 20) + '...' : student.name;
+      doc.text(displayName, x + 5, textY, { 
+        width: columnWidths[2] - 10, align: 'left' 
+      });
+      x += columnWidths[2];
+
+      // Daily attendance with beautiful status indicators
       for (let day = 1; day <= daysInMonth; day++) {
         const status = studentAttendance.get(day);
-        let displayText = '-';
-        let textColor = colors.text;
+        const cellX = x;
+        const cellY = currentY;
         
         if (status === 'present') {
-          displayText = 'P';
-          textColor = colors.success;
+          // Present - Green circle with checkmark
+          doc.circle(cellX + (columnWidths[day + 2] / 2), cellY + (rowHeight / 2), 6)
+             .fill(colors.success);
+          doc.fillColor(colors.white).fontSize(8).font('Helvetica-Bold');
+          doc.text('P', cellX + 3, textY, { 
+            width: columnWidths[day + 2] - 6, align: 'center' 
+          });
         } else if (status === 'absent') {
-          displayText = 'A';
-          textColor = colors.danger;
+          // Absent - Red circle with X
+          doc.circle(cellX + (columnWidths[day + 2] / 2), cellY + (rowHeight / 2), 6)
+             .fill(colors.danger);
+          doc.fillColor(colors.white).fontSize(8).font('Helvetica-Bold');
+          doc.text('A', cellX + 3, textY, { 
+            width: columnWidths[day + 2] - 6, align: 'center' 
+          });
+        } else {
+          // Not marked - Light gray circle
+          doc.circle(cellX + (columnWidths[day + 2] / 2), cellY + (rowHeight / 2), 4)
+             .fill(colors.border);
+          doc.fillColor(colors.muted).fontSize(7).font('Helvetica');
+          doc.text('-', cellX + 3, textY, { 
+            width: columnWidths[day + 2] - 6, align: 'center' 
+          });
         }
-        
-        doc.fillColor(textColor).text(displayText, x + 2, currentY + 6, { 
-          width: columnWidths[day + 1] - 4, align: 'center' 
-        });
-        x += columnWidths[day + 1];
+        x += columnWidths[day + 2];
       }
 
-      // Summary columns
-      doc.fillColor(colors.success).text(presentCount.toString(), x + 2, currentY + 6, { 
-        width: columnWidths[daysInMonth + 2] - 4, align: 'center' 
-      });
-      x += columnWidths[daysInMonth + 2];
-
-      doc.fillColor(colors.danger).text(absentCount.toString(), x + 2, currentY + 6, { 
-        width: columnWidths[daysInMonth + 3] - 4, align: 'center' 
+      // Summary columns with beautiful styling
+      // Present count
+      doc.fillColor(colors.white).fontSize(8);
+      doc.roundedRect(x + 2, cellY + 4, columnWidths[daysInMonth + 3] - 4, rowHeight - 8, 3)
+         .fill(colors.success);
+      doc.fillColor(colors.white).font('Helvetica-Bold');
+      doc.text(presentCount.toString(), x + 3, textY, { 
+        width: columnWidths[daysInMonth + 3] - 6, align: 'center' 
       });
       x += columnWidths[daysInMonth + 3];
 
-      const percentColor = percentage >= 75 ? colors.success : percentage >= 60 ? '#d97706' : colors.danger;
-      doc.fillColor(percentColor).text(`${percentage}%`, x + 2, currentY + 6, { 
-        width: columnWidths[daysInMonth + 4] - 4, align: 'center' 
+      // Absent count
+      doc.roundedRect(x + 2, cellY + 4, columnWidths[daysInMonth + 4] - 4, rowHeight - 8, 3)
+         .fill(colors.danger);
+      doc.fillColor(colors.white).font('Helvetica-Bold');
+      doc.text(absentCount.toString(), x + 3, textY, { 
+        width: columnWidths[daysInMonth + 4] - 6, align: 'center' 
+      });
+      x += columnWidths[daysInMonth + 4];
+
+      // Percentage with gradient background
+      const percentColor = percentage >= 75 ? colors.success : 
+                          percentage >= 60 ? colors.warning : colors.danger;
+      
+      doc.roundedRect(x + 2, cellY + 4, columnWidths[daysInMonth + 5] - 4, rowHeight - 8, 3)
+         .fill(percentColor);
+      doc.fillColor(colors.white).fontSize(9).font('Helvetica-Bold');
+      doc.text(`${percentage}%`, x + 3, textY, { 
+        width: columnWidths[daysInMonth + 5] - 6, align: 'center' 
       });
 
       doc.y = currentY + rowHeight;
+      rowIndex++;
 
-      // Page break check
+      // Page break with header repeat
       if (doc.y > doc.page.height - 100) {
-        doc.addPage({ margin: 40, size: 'A4', layout: 'landscape' });
+        // Add beautiful footer before page break
+        doc.y = doc.page.height - 60;
+        doc.strokeColor(colors.border).lineWidth(1);
+        doc.moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
         
-        // Simple header repeat
-        doc.rect(40, 40, pageWidth, 25).fill(colors.primary);
-        doc.font('Helvetica-Bold').fillColor('#ffffff').fontSize(9);
-        x = 40;
+        doc.fillColor(colors.muted).fontSize(8).font('Helvetica');
+        doc.text(`Page ${doc.bufferedPageRange().count}`, 30, doc.y + 10);
+        doc.text(`Generated by Academic Management System`, doc.page.width - 200, doc.y + 10);
+        
+        doc.addPage({ margin: 30, size: 'A4', layout: 'landscape' });
+        
+        // Repeat header on new page
+        drawGradientRect(30, 40, pageWidth, 35, colors.primary, colors.secondary);
+        doc.font('Helvetica-Bold').fillColor(colors.white).fontSize(10);
+        x = 30;
         headers.forEach((header, i) => {
-          doc.text(header, x + 2, 48, { width: columnWidths[i] - 4, align: 'center' });
+          doc.text(header, x + 3, 52, { width: columnWidths[i] - 6, align: 'center' });
           x += columnWidths[i];
         });
-        doc.y = 70;
+        doc.y = 80;
       }
 
-      // OPTIMIZATION 5: Yield control periodically to prevent blocking
-      if (i > 0 && i % 50 === 0) {
+      // Progress logging
+      if (i > 0 && i % 25 === 0) {
         await new Promise(resolve => setImmediate(resolve));
         console.log(`Processed ${i}/${students.length} students`);
       }
     }
 
-    // Simple footer
+    // BEAUTIFUL FOOTER SECTION
     doc.y += 20;
-    const avgAttendance = totalPossibleDays > 0 ? (totalPresentDays / totalPossibleDays) * 100 : 0;
+
+    // Footer separator
+    doc.strokeColor(colors.primary).lineWidth(2);
+    doc.moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
+    doc.y += 15;
+
+    // Summary statistics in a beautiful layout
+    const summaryY = doc.y;
     
-    doc.fillColor(colors.text).fontSize(10).font('Helvetica')
-       .text(`Total Students: ${students.length} | Average Attendance: ${avgAttendance.toFixed(1)}%`, 40, doc.y);
+    // Summary background
+    drawRoundedRect(30, summaryY, pageWidth, 80, 10);
+    doc.fill(colors.light);
+    doc.strokeColor(colors.border).lineWidth(1).stroke();
 
-    doc.fontSize(8)
-       .text(`Generated: ${new Date().toLocaleString('en-IN')}`, 40, doc.y + 20);
+    // Summary content
+    doc.fillColor(colors.primary).fontSize(14).font('Helvetica-Bold');
+    doc.text('ATTENDANCE SUMMARY', 50, summaryY + 15);
 
-    console.log('Finalizing PDF...');
+    doc.fillColor(colors.text).fontSize(11).font('Helvetica');
+    doc.text(`Total Students: ${students.length}`, 50, summaryY + 35);
+    doc.text(`Overall Attendance: ${overallPercentage.toFixed(2)}%`, 250, summaryY + 35);
+    doc.text(`Total Present Days: ${totalPresent}`, 450, summaryY + 35);
+
+    doc.text(`Academic Month: ${monthNames[selectedMonth]} ${selectedYear}`, 50, summaryY + 50);
+    doc.text(`Subject: ${subject}`, 250, summaryY + 50);
+    doc.text(`Department: ${branch}`, 450, summaryY + 50);
+
+    // Generation timestamp
+    doc.fillColor(colors.muted).fontSize(9).font('Helvetica');
+    doc.text(`Report generated on ${new Date().toLocaleString('en-IN', { 
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })}`, 50, summaryY + 65);
+
+    // Beautiful signature area
+    doc.text('Authorized Signature: ________________________', doc.page.width - 250, summaryY + 65);
+
+    console.log('Finalizing beautiful PDF...');
 
     // Finalize PDF
     doc.end();
 
-    // OPTIMIZATION 6: Set up proper error handling and cleanup
+    // Handle file completion and sending
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('PDF generation timeout')), 240000); // 4 minute timeout
+      setTimeout(() => reject(new Error('PDF generation timeout')), 240000);
     });
 
     const streamPromise = new Promise((resolve, reject) => {
@@ -734,9 +978,8 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     try {
       await Promise.race([streamPromise, timeoutPromise]);
-      console.log('PDF generation completed successfully');
+      console.log('Beautiful PDF generation completed successfully');
 
-      // Send the file
       res.download(filePath, fileName, (err) => {
         if (err) {
           console.error('Error sending file:', err);
@@ -745,7 +988,7 @@ exports.generateAttendanceRegister = async (req, res) => {
           }
         }
         
-        // Clean up: delete the temporary file
+        // Clean up
         try {
           if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
@@ -758,7 +1001,6 @@ exports.generateAttendanceRegister = async (req, res) => {
     } catch (timeoutErr) {
       console.error('PDF generation timed out:', timeoutErr);
       
-      // Clean up on timeout
       try {
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
@@ -776,7 +1018,7 @@ exports.generateAttendanceRegister = async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Error generating attendance register:', error);
+    console.error('Error generating beautiful attendance register:', error);
     
     if (!res.headersSent) {
       res.status(500).json({ 
