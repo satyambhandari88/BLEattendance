@@ -348,6 +348,75 @@ exports.addBranch = async (req, res) => {
 
 
 
+
+// Fetch all branches
+exports.getAllBranches = async (req, res) => {
+  try {
+    const branches = await Branch.find();
+    res.status(200).json({ success: true, branches });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to fetch branches', error: err.message });
+  }
+};
+
+
+exports.updateBranch = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ success: false, message: 'Branch name is required' });
+    }
+
+    const branch = await Branch.findById(id);
+    if (!branch) {
+      return res.status(404).json({ success: false, message: 'Branch not found' });
+    }
+
+    const existingBranch = await Branch.findOne({ name, _id: { $ne: id } });
+    if (existingBranch) {
+      return res.status(400).json({ success: false, message: 'Branch name already exists' });
+    }
+
+    branch.name = name;
+    await branch.save();
+
+    res.json({ success: true, message: 'Branch updated successfully', branch });
+  } catch (err) {
+    console.error(err);
+    if (err.kind === 'ObjectId') {
+      return res.status(400).json({ success: false, message: 'Invalid branch ID' });
+    }
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+
+
+exports.deleteBranch = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const branch = await Branch.findById(id);
+    if (!branch) {
+      return res.status(404).json({ success: false, message: 'Branch not found' });
+    }
+
+    await branch.deleteOne();
+
+    res.json({ success: true, message: 'Branch deleted successfully' });
+  } catch (err) {
+    console.error(err);
+    if (err.kind === 'ObjectId') {
+      return res.status(400).json({ success: false, message: 'Invalid branch ID' });
+    }
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+
+
 exports.addSubject = async (req, res) => {
   try {
     const subject = new Subject(req.body);
@@ -377,15 +446,6 @@ exports.addAcademicStructure = async (req, res) => {
 
 
 
-// Fetch all branches
-exports.getAllBranches = async (req, res) => {
-  try {
-    const branches = await Branch.find();
-    res.status(200).json({ success: true, branches });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to fetch branches', error: err.message });
-  }
-};
 
 // Fetch all subjects
 exports.getAllSubjects = async (req, res) => {
