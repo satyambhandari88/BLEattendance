@@ -10,7 +10,7 @@ const { addStudent, addTeacher, addClass, fetchStudents, fetchTeachers, fetchCla
       generateAttendanceRegister,updateYear,deleteYear,updateBranch,
   deleteBranch,updateSubject,
   deleteSubject,updateAcademicStructure,
-  deleteAcademicStructure} = require('../controllers/adminController');
+  deleteAcademicStructure,updateClass,deleteClass} = require('../controllers/adminController');
 const router = express.Router();
 // const { authenticateAdmin } = require('../middlewares/authMiddleware');
 
@@ -62,5 +62,8 @@ router.put('/subjects/:id', updateSubject);
 router.delete('/subjects/:id', deleteSubject);
 router.put('/academic-structures/:id', updateAcademicStructure);
 router.delete('/academic-structures/:id', deleteAcademicStructure);
+router.put('/classes/:id', updateClass);
+router.delete('/classes/:id', deleteClass);
+
 
 module.exports = router;
