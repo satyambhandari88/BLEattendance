@@ -467,8 +467,18 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     // Parse month into date range (YYYY-MM)
     const [yearStr, monthStr] = month.split('-');
-    const startDate = new Date(yearStr, monthStr - 1, 1); // First day of month
-    const endDate = new Date(yearStr, monthStr, 0); // Last day of month
+    const selectedYear = parseInt(yearStr);
+    const selectedMonth = parseInt(monthStr) - 1; // JavaScript months are 0-indexed
+    
+    const startDate = new Date(selectedYear, selectedMonth, 1);
+    const endDate = new Date(selectedYear, selectedMonth + 1, 0); // Last day of month
+    const daysInMonth = endDate.getDate();
+
+    // Month names for display
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
 
     // Find students matching year & branch
     const students = await Student.find({ 
@@ -483,26 +493,27 @@ exports.generateAttendanceRegister = async (req, res) => {
       });
     }
 
-    // Get ALL attendance records for this subject (no className filter)
+    // Updated attendance query to match your schema
     const attendanceQuery = {
-      subject: { $regex: new RegExp(`^${subject}$`, 'i') }, // Case-insensitive match
-      date: { $gte: startDate, $lte: endDate }
+      subject: { $regex: new RegExp(`^${subject}$`, 'i') },
+      time: { $gte: startDate, $lte: endDate }
     };
 
-    // Fetch all matching attendance records at once (optimized)
+    // Fetch all matching attendance records
     const allAttendanceRecords = await Attendance.find(attendanceQuery);
+    console.log(`Found ${allAttendanceRecords.length} attendance records`);
 
-    // Group attendance by student for faster lookup
-    const attendanceByStudent = new Map();
+    // Group attendance by rollNumber for faster lookup
+    const attendanceByRollNumber = new Map();
     allAttendanceRecords.forEach(record => {
-      const studentId = record.student.toString();
-      if (!attendanceByStudent.has(studentId)) {
-        attendanceByStudent.set(studentId, []);
+      const rollNumber = record.rollNumber;
+      if (!attendanceByRollNumber.has(rollNumber)) {
+        attendanceByRollNumber.set(rollNumber, []);
       }
-      attendanceByStudent.get(studentId).push(record);
+      attendanceByRollNumber.get(rollNumber).push(record);
     });
 
-    // Generate PDF (same as before, but now includes all classes of the subject)
+    // Generate PDF
     const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
     
     const fileName = `attendance_register_${month}.pdf`;
@@ -519,13 +530,13 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     // Define colors
     const colors = {
-      primary: '#2563eb',      // Professional blue
-      secondary: '#64748b',    // Slate gray
-      success: '#16a34a',      // Green for present
-      danger: '#dc2626',       // Red for absent
-      background: '#f8fafc',   // Light background
-      border: '#e2e8f0',       // Border color
-      text: '#1e293b'          // Dark text
+      primary: '#2563eb',
+      secondary: '#64748b',
+      success: '#16a34a',
+      danger: '#dc2626',
+      background: '#f8fafc',
+      border: '#e2e8f0',
+      text: '#1e293b'
     };
 
     // Add decorative header background
@@ -589,8 +600,8 @@ exports.generateAttendanceRegister = async (req, res) => {
     const pageWidth = doc.page.width - 80;
     
     // Calculate dynamic column widths
-    const fixedColsWidth = 200; // Roll No (60) + Name (140)
-    const summaryColsWidth = 140; // Present (40) + Absent (40) + % (40) + Total (20)
+    const fixedColsWidth = 200;
+    const summaryColsWidth = 140;
     const availableWidth = pageWidth - fixedColsWidth - summaryColsWidth;
     const dayColWidth = Math.max(18, Math.min(25, availableWidth / daysInMonth));
     
@@ -607,13 +618,10 @@ exports.generateAttendanceRegister = async (req, res) => {
     
     headers.forEach((header, i) => {
       if (i < 2) {
-        // Fixed columns
         doc.text(header, x + 5, headerY, { width: columnWidths[i] - 10, align: 'center' });
       } else if (i >= headers.length - 4) {
-        // Summary columns
         doc.text(header, x + 2, headerY, { width: columnWidths[i] - 4, align: 'center' });
       } else {
-        // Day columns - vertical text for better fit
         doc.text(header, x + 2, headerY, { width: columnWidths[i] - 4, align: 'center' });
       }
       x += columnWidths[i];
@@ -626,26 +634,25 @@ exports.generateAttendanceRegister = async (req, res) => {
     let rowIndex = 0;
     
     for (const student of students) {
-      // Get attendance records for this student and subject for the entire month
-      const attendanceRecords = await Attendance.find({
-        student: student._id,
-        subject: subject,
-        date: {
-          $gte: new Date(selectedYear, selectedMonth, 1),
-          $lte: new Date(selectedYear, selectedMonth, daysInMonth)
-        }
-      }).sort('date');
+      // Get attendance records for this student using rollNumber
+      const attendanceRecords = attendanceByRollNumber.get(student.rollNumber.toString()) || [];
+      
+      console.log(`Student ${student.rollNumber}: Found ${attendanceRecords.length} records`);
 
       // Create day-wise attendance status
       const dayStatus = {};
       attendanceRecords.forEach(record => {
-        const day = record.date.getDate();
-        dayStatus[day] = record.status === 'present' ? 'P' : 'A';
+        const recordDate = new Date(record.time);
+        const day = recordDate.getDate();
+        
+        // Handle case-insensitive status comparison
+        const status = record.status.toLowerCase();
+        dayStatus[day] = status === 'present' ? 'P' : 'A';
       });
 
       // Calculate totals
-      const presentCount = attendanceRecords.filter(r => r.status === 'present').length;
-      const absentCount = attendanceRecords.filter(r => r.status === 'absent').length;
+      const presentCount = attendanceRecords.filter(r => r.status.toLowerCase() === 'present').length;
+      const absentCount = attendanceRecords.filter(r => r.status.toLowerCase() === 'absent').length;
       const totalMarkedDays = presentCount + absentCount;
       const percentage = totalMarkedDays > 0 ? Math.round((presentCount / totalMarkedDays) * 100) : 0;
       
@@ -766,20 +773,12 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     // Calculate average attendance across all students
     for (const student of students) {
-      const studentAttendance = await Attendance.find({
-        student: student._id,
-        subject: subject,
-        date: {
-          $gte: new Date(selectedYear, selectedMonth, 1),
-          $lte: new Date(selectedYear, selectedMonth, daysInMonth)
-        }
-      });
-      
-      const presentCount = studentAttendance.filter(r => r.status === 'present').length;
+      const studentAttendance = attendanceByRollNumber.get(student.rollNumber.toString()) || [];
+      const presentCount = studentAttendance.filter(r => r.status.toLowerCase() === 'present').length;
       const totalMarkedDays = studentAttendance.length;
       
       totalPresentDays += presentCount;
-      totalPossibleDays += Math.max(totalMarkedDays, 1); // Avoid division by zero
+      totalPossibleDays += Math.max(totalMarkedDays, 1);
     }
 
     const avgAttendance = totalPossibleDays > 0 ? (totalPresentDays / totalPossibleDays) * 100 : 0;
@@ -851,4 +850,3 @@ exports.generateAttendanceRegister = async (req, res) => {
     });
   }
 };
-
