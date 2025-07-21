@@ -7,7 +7,8 @@ const { addStudent, addTeacher, addClass, fetchStudents, fetchTeachers, fetchCla
   getAllSubjects,
       getAcademicStructures,
        getTeacherSubjects,
-      generateAttendanceRegister,updateYear,deleteYear} = require('../controllers/adminController');
+      generateAttendanceRegister,updateYear,deleteYear,updateBranch,
+  deleteBranch} = require('../controllers/adminController');
 const router = express.Router();
 // const { authenticateAdmin } = require('../middlewares/authMiddleware');
 
@@ -53,5 +54,7 @@ router.post('/generate-register', generateAttendanceRegister);
 
 router.put('/:id', updateYear);
 router.delete('/:id', deleteYear);
+router.put('/:id', updateBranch);
+router.delete('/:id', deleteBranch);
 
 module.exports = router;
