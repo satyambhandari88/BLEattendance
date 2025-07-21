@@ -534,9 +534,9 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     console.log('Starting PDF generation...');
 
-    // Generate PDF with streaming to avoid memory issues
+    // Generate PDF with optimized settings for more content
     const doc = new PDFDocument({ 
-      margin: 40, 
+      margin: 25, // Reduced margin for more space
       size: 'A4', 
       layout: 'landscape',
       compress: true // Compress PDF to reduce size
@@ -562,64 +562,74 @@ exports.generateAttendanceRegister = async (req, res) => {
       danger: '#dc2626',
       background: '#f8fafc',
       border: '#e2e8f0',
-      text: '#1e293b'
+      text: '#1e293b',
+      lightGray: '#f1f5f9'
     };
 
-    // SIMPLIFIED HEADER (faster rendering)
-    // UPDATED HEADER SECTION with College Name
-doc.rect(0, 0, doc.page.width, 100).fill(colors.primary);
+    // Function to draw table header
+    const drawTableHeader = (startY) => {
+      const pageWidth = doc.page.width - 50; // Adjusted for new margins
+      
+      // Calculate column widths (optimized for more space)
+      const dayColWidth = Math.min(18, (pageWidth - 280) / daysInMonth);
+      const headers = ['Roll No', 'Name', ...Array.from({ length: daysInMonth }, (_, i) => (i + 1).toString()), 'P', 'A', '%'];
+      const columnWidths = [50, 110, ...Array(daysInMonth).fill(dayColWidth), 20, 20, 30];
 
-// College Name
-doc.fillColor('#ffffff').fontSize(18).font('Helvetica-Bold')
-   .text('KAMLA NEHRU INSTITUTE OF TECHNOLOGY', 40, 15, {
-     width: doc.page.width - 80,
-     align: 'center'
-   });
-
-// Attendance Record heading
-doc.fontSize(16).font('Helvetica-Bold')
-   .text('ATTENDANCE RECORD', 40, 40, {
-     width: doc.page.width - 80,
-     align: 'center'
-   });
-
-// Subject, Branch, Year, Month details
-doc.fontSize(12).font('Helvetica')
-   .text(`Subject: ${subject} | Branch: ${branch} | Year: ${year} | Month: ${monthNames[selectedMonth]} ${selectedYear}`, 40, 65, {
-     width: doc.page.width - 80,
-     align: 'center'
-   });
-
-// Update the starting Y position for the table
-doc.y = 120;
-
-    // SIMPLIFIED TABLE LAYOUT
-    const tableStartY = doc.y;
-    const pageWidth = doc.page.width - 80;
-    
-    // Calculate column widths (optimized)
-    const dayColWidth = Math.min(20, (pageWidth - 300) / daysInMonth);
-    const headers = ['Roll No', 'Name', ...Array.from({ length: daysInMonth }, (_, i) => (i + 1).toString()), 'P', 'A', '%'];
-    const columnWidths = [60, 120, ...Array(daysInMonth).fill(dayColWidth), 25, 25, 35];
-
-    // Table header
-    doc.rect(40, tableStartY, pageWidth, 25).fill(colors.primary);
-    doc.font('Helvetica-Bold').fillColor('#ffffff').fontSize(9);
-    
-    let x = 40;
-    headers.forEach((header, i) => {
-      doc.text(header, x + 2, tableStartY + 8, { 
-        width: columnWidths[i] - 4, 
-        align: 'center' 
+      // Table header background
+      doc.rect(25, startY, pageWidth, 20).fill(colors.primary);
+      doc.font('Helvetica-Bold').fillColor('#ffffff').fontSize(7);
+      
+      let x = 25;
+      headers.forEach((header, i) => {
+        doc.text(header, x + 1, startY + 6, { 
+          width: columnWidths[i] - 2, 
+          align: 'center' 
+        });
+        x += columnWidths[i];
       });
-      x += columnWidths[i];
-    });
 
-    doc.y = tableStartY + 25;
+      return { columnWidths, pageWidth };
+    };
 
-    // OPTIMIZATION 4: Batch process students and use simpler styling
-    let totalPresentDays = 0;
-    let totalPossibleDays = 0;
+    // OPTIMIZED HEADER SECTION
+    doc.rect(0, 0, doc.page.width, 80).fill(colors.primary);
+
+    // College Name
+    doc.fillColor('#ffffff').fontSize(16).font('Helvetica-Bold')
+       .text('KAMLA NEHRU INSTITUTE OF TECHNOLOGY', 25, 12, {
+         width: doc.page.width - 50,
+         align: 'center'
+       });
+
+    // Attendance Record heading
+    doc.fontSize(14).font('Helvetica-Bold')
+       .text('ATTENDANCE RECORD', 25, 32, {
+         width: doc.page.width - 50,
+         align: 'center'
+       });
+
+    // Subject, Branch, Year, Month details
+    doc.fontSize(10).font('Helvetica')
+       .text(`Subject: ${subject} | Branch: ${branch} | Year: ${year} | Month: ${monthNames[selectedMonth]} ${selectedYear}`, 25, 52, {
+         width: doc.page.width - 50,
+         align: 'center'
+       });
+
+    // Start table after header
+    doc.y = 90;
+    const tableStartY = doc.y;
+    const { columnWidths, pageWidth } = drawTableHeader(tableStartY);
+
+    doc.y = tableStartY + 20;
+
+    // OPTIMIZATION 4: Compact student rows for 50+ students per page
+    const rowHeight = 14; // Reduced row height
+    const studentsPerPage = Math.floor((doc.page.height - 140) / rowHeight); // Calculate max students per page
+    
+    console.log(`Calculated ${studentsPerPage} students per page with row height ${rowHeight}`);
+
+    let currentPage = 1;
+    let studentsOnCurrentPage = 0;
 
     for (let i = 0; i < students.length; i++) {
       const student = students[i];
@@ -637,108 +647,120 @@ doc.y = 120;
       
       const totalMarked = presentCount + absentCount;
       const percentage = totalMarked > 0 ? Math.round((presentCount / totalMarked) * 100) : 0;
-      
-      totalPresentDays += presentCount;
-      totalPossibleDays += Math.max(totalMarked, 1);
 
       const currentY = doc.y;
-      const rowHeight = 20;
 
-      // Simple alternating background
+      // Enhanced alternating row colors for better readability
       if (i % 2 === 0) {
-        doc.rect(40, currentY, pageWidth, rowHeight).fill('#f9f9f9');
+        doc.rect(25, currentY, pageWidth, rowHeight).fill(colors.lightGray).stroke();
+      } else {
+        doc.rect(25, currentY, pageWidth, rowHeight).fillAndStroke('#ffffff', colors.border);
       }
 
-      // Student data (simplified styling for speed)
-      x = 40;
-      doc.fillColor(colors.text).fontSize(8).font('Helvetica');
+      // Student data with optimized font size
+      let x = 25;
+      doc.fillColor(colors.text).fontSize(7).font('Helvetica');
       
       // Roll Number
-      doc.text(student.rollNumber.toString(), x + 2, currentY + 6, { 
-        width: columnWidths[0] - 4, align: 'center' 
+      doc.text(student.rollNumber.toString(), x + 1, currentY + 4, { 
+        width: columnWidths[0] - 2, align: 'center' 
       });
       x += columnWidths[0];
 
-      // Name (truncated for performance)
-      const displayName = student.name.length > 18 ? student.name.substring(0, 18) + '...' : student.name;
-      doc.text(displayName, x + 2, currentY + 6, { 
-        width: columnWidths[1] - 4, align: 'left' 
+      // Name (optimized truncation)
+      const displayName = student.name.length > 16 ? student.name.substring(0, 16) + '...' : student.name;
+      doc.text(displayName, x + 1, currentY + 4, { 
+        width: columnWidths[1] - 2, align: 'left' 
       });
       x += columnWidths[1];
 
-      // Daily attendance (simplified display)
+      // Daily attendance with enhanced styling
       for (let day = 1; day <= daysInMonth; day++) {
         const status = studentAttendance.get(day);
         let displayText = '-';
-        let textColor = colors.text;
+        let textColor = colors.secondary;
         
         if (status === 'present') {
           displayText = 'P';
           textColor = colors.success;
+          doc.font('Helvetica-Bold');
         } else if (status === 'absent') {
           displayText = 'A';
           textColor = colors.danger;
+          doc.font('Helvetica-Bold');
+        } else {
+          doc.font('Helvetica');
         }
         
-        doc.fillColor(textColor).text(displayText, x + 2, currentY + 6, { 
-          width: columnWidths[day + 1] - 4, align: 'center' 
+        doc.fillColor(textColor).text(displayText, x + 1, currentY + 4, { 
+          width: columnWidths[day + 1] - 2, align: 'center' 
         });
         x += columnWidths[day + 1];
       }
 
-      // Summary columns
-      doc.fillColor(colors.success).text(presentCount.toString(), x + 2, currentY + 6, { 
-        width: columnWidths[daysInMonth + 2] - 4, align: 'center' 
-      });
+      // Summary columns with enhanced styling
+      doc.font('Helvetica-Bold').fillColor(colors.success)
+         .text(presentCount.toString(), x + 1, currentY + 4, { 
+           width: columnWidths[daysInMonth + 2] - 2, align: 'center' 
+         });
       x += columnWidths[daysInMonth + 2];
 
-      doc.fillColor(colors.danger).text(absentCount.toString(), x + 2, currentY + 6, { 
-        width: columnWidths[daysInMonth + 3] - 4, align: 'center' 
-      });
+      doc.fillColor(colors.danger)
+         .text(absentCount.toString(), x + 1, currentY + 4, { 
+           width: columnWidths[daysInMonth + 3] - 2, align: 'center' 
+         });
       x += columnWidths[daysInMonth + 3];
 
       const percentColor = percentage >= 75 ? colors.success : percentage >= 60 ? '#d97706' : colors.danger;
-      doc.fillColor(percentColor).text(`${percentage}%`, x + 2, currentY + 6, { 
-        width: columnWidths[daysInMonth + 4] - 4, align: 'center' 
-      });
+      doc.fillColor(percentColor)
+         .text(`${percentage}%`, x + 1, currentY + 4, { 
+           width: columnWidths[daysInMonth + 4] - 2, align: 'center' 
+         });
 
       doc.y = currentY + rowHeight;
+      studentsOnCurrentPage++;
 
-      // Page break check
-      if (doc.y > doc.page.height - 100) {
-        doc.addPage({ margin: 40, size: 'A4', layout: 'landscape' });
+      // Page break logic - optimized for 50+ students per page
+      if (studentsOnCurrentPage >= 50 || doc.y > doc.page.height - 40) {
+        console.log(`Page ${currentPage} completed with ${studentsOnCurrentPage} students`);
         
-        // Simple header repeat
-        doc.rect(40, 40, pageWidth, 25).fill(colors.primary);
-        doc.font('Helvetica-Bold').fillColor('#ffffff').fontSize(9);
-        x = 40;
-        headers.forEach((header, i) => {
-          doc.text(header, x + 2, 48, { width: columnWidths[i] - 4, align: 'center' });
-          x += columnWidths[i];
-        });
-        doc.y = 70;
+        if (i < students.length - 1) {
+          doc.addPage({ margin: 25, size: 'A4', layout: 'landscape' });
+          currentPage++;
+          studentsOnCurrentPage = 0;
+          
+          // Compact header for subsequent pages
+          doc.rect(0, 0, doc.page.width, 60).fill(colors.primary);
+          
+          doc.fillColor('#ffffff').fontSize(12).font('Helvetica-Bold')
+             .text('KNIT - ATTENDANCE RECORD (Continued)', 25, 15, {
+               width: doc.page.width - 50,
+               align: 'center'
+             });
+          
+          doc.fontSize(9).font('Helvetica')
+             .text(`${subject} | ${branch} | ${year} | ${monthNames[selectedMonth]} ${selectedYear} | Page ${currentPage}`, 25, 35, {
+               width: doc.page.width - 50,
+               align: 'center'
+             });
+          
+          doc.y = 70;
+          const headerResult = drawTableHeader(doc.y);
+          doc.y += 20;
+        }
       }
 
       // OPTIMIZATION 5: Yield control periodically to prevent blocking
-      if (i > 0 && i % 50 === 0) {
+      if (i > 0 && i % 25 === 0) {
         await new Promise(resolve => setImmediate(resolve));
         console.log(`Processed ${i}/${students.length} students`);
       }
     }
 
-    // Simple footer
-    doc.y += 20;
-    const avgAttendance = totalPossibleDays > 0 ? (totalPresentDays / totalPossibleDays) * 100 : 0;
-    
-    doc.fillColor(colors.text).fontSize(10).font('Helvetica')
-       .text(`Total Students: ${students.length} | Average Attendance: ${avgAttendance.toFixed(1)}%`, 40, doc.y);
-
-    doc.fontSize(8)
-       .text(`Generated: ${new Date().toLocaleString('en-IN')}`, 40, doc.y + 20);
-
+    console.log(`PDF generation completed with ${currentPage} pages`);
     console.log('Finalizing PDF...');
 
-    // Finalize PDF
+    // Finalize PDF (no footer content as requested)
     doc.end();
 
     // OPTIMIZATION 6: Set up proper error handling and cleanup
