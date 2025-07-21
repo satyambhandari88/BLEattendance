@@ -10,7 +10,7 @@ const { addStudent, addTeacher, addClass, fetchStudents, fetchTeachers, fetchCla
       generateAttendanceRegister,updateYear,deleteYear,updateBranch,
   deleteBranch,updateSubject,
   deleteSubject,updateAcademicStructure,
-  deleteAcademicStructure,updateClass,deleteClass} = require('../controllers/adminController');
+  deleteAcademicStructure,updateClass,deleteClass,generateSubjectWiseReport} = require('../controllers/adminController');
 const router = express.Router();
 // const { authenticateAdmin } = require('../middlewares/authMiddleware');
 
@@ -51,6 +51,8 @@ router.post('/add-academic-structure', addAcademicStructure);
 router.get('/academic-structures', getAcademicStructures);
 router.get('/teacher-subjects/:teacherId/:yearId/:branchId', getTeacherSubjects);
 router.post('/generate-register', generateAttendanceRegister);
+// Add to adminRoutes.js
+router.post('/generate-subject-wise-report', generateSubjectWiseReport);
 
 
 
