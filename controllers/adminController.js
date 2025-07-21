@@ -505,9 +505,8 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     console.log(`Found ${students.length} students and ${allAttendanceRecords.length} attendance records`);
 
-    // Pre-process attendance data
+    // Pre-process attendance data efficiently
     const attendanceByRollNumber = new Map();
-    const dailyAttendanceStats = new Map();
     
     allAttendanceRecords.forEach(record => {
       const rollNumber = record.rollNumber.toString();
@@ -518,26 +517,17 @@ exports.generateAttendanceRegister = async (req, res) => {
         attendanceByRollNumber.set(rollNumber, new Map());
       }
       attendanceByRollNumber.get(rollNumber).set(day, record.status.toLowerCase());
-      
-      if (!dailyAttendanceStats.has(day)) {
-        dailyAttendanceStats.set(day, { present: 0, absent: 0, total: 0 });
-      }
-      dailyAttendanceStats.get(day).total++;
-      if (record.status.toLowerCase() === 'present') {
-        dailyAttendanceStats.get(day).present++;
-      } else {
-        dailyAttendanceStats.get(day).absent++;
-      }
     });
 
-    console.log('Starting beautiful PDF generation...');
+    console.log('Starting optimized beautiful PDF generation...');
 
-    // Create PDF with premium settings
+    // Create PDF with optimized settings
     const doc = new PDFDocument({ 
       margin: 30, 
       size: 'A4', 
       layout: 'landscape',
-      compress: true
+      compress: true,
+      bufferPages: true // Enable page buffering for better performance
     });
     
     const fileName = `attendance_register_${month}.pdf`;
@@ -550,84 +540,55 @@ exports.generateAttendanceRegister = async (req, res) => {
     const stream = fs.createWriteStream(filePath);
     doc.pipe(stream);
 
-    // Premium Color Palette
+    // Optimized Color Palette
     const colors = {
-      primary: '#1e40af',      // Deep blue
-      secondary: '#7c3aed',    // Purple
-      accent: '#059669',       // Emerald
-      warning: '#d97706',      // Amber
-      danger: '#dc2626',       // Red
-      success: '#16a34a',      // Green
-      dark: '#1f2937',         // Dark gray
-      light: '#f8fafc',        // Light gray
+      primary: '#1e40af',
+      secondary: '#7c3aed',
+      accent: '#059669',
+      warning: '#d97706',
+      danger: '#dc2626',
+      success: '#16a34a',
+      dark: '#1f2937',
+      light: '#f8fafc',
       white: '#ffffff',
-      border: '#e5e7eb',       // Border gray
-      text: '#374151',         // Text gray
-      muted: '#6b7280',        // Muted text
-      gradient1: '#667eea',    // Gradient start
-      gradient2: '#764ba2',    // Gradient end
-      shadow: 'rgba(0,0,0,0.1)'
+      border: '#e5e7eb',
+      text: '#374151',
+      muted: '#6b7280'
     };
 
-    // Helper function to draw gradient background
-    const drawGradientRect = (x, y, width, height, color1, color2) => {
-      const gradient = doc.linearGradient(x, y, x + width, y);
-      gradient.stop(0, color1).stop(1, color2);
-      doc.rect(x, y, width, height).fill(gradient);
-    };
-
-    // Helper function to draw rounded rectangle
-    const drawRoundedRect = (x, y, width, height, radius = 5) => {
-      doc.roundedRect(x, y, width, height, radius);
-    };
-
-    // STUNNING HEADER SECTION
-    const headerHeight = 120;
+    // BEAUTIFUL BUT OPTIMIZED HEADER
+    const headerHeight = 100;
     
-    // Header gradient background
-    drawGradientRect(0, 0, doc.page.width, headerHeight, colors.gradient1, colors.gradient2);
-    
-    // Add subtle pattern overlay
-    doc.save();
-    doc.opacity(0.1);
-    for (let i = 0; i < doc.page.width; i += 40) {
-      for (let j = 0; j < headerHeight; j += 40) {
-        doc.circle(i, j, 2).fill(colors.white);
-      }
-    }
-    doc.restore();
+    // Simple gradient background (faster than complex patterns)
+    const gradient = doc.linearGradient(0, 0, doc.page.width, headerHeight);
+    gradient.stop(0, colors.primary).stop(1, colors.secondary);
+    doc.rect(0, 0, doc.page.width, headerHeight).fill(gradient);
 
-    // Main title with shadow effect
+    // Header text with simple shadow
     doc.save();
-    doc.fillColor('rgba(0,0,0,0.3)').fontSize(28).font('Helvetica-Bold');
+    doc.fillColor('rgba(0,0,0,0.2)').fontSize(26).font('Helvetica-Bold');
     doc.text('ATTENDANCE REGISTER', 42, 22); // Shadow
-    doc.fillColor(colors.white).fontSize(28).font('Helvetica-Bold');
+    doc.fillColor(colors.white).fontSize(26).font('Helvetica-Bold');
     doc.text('ATTENDANCE REGISTER', 40, 20); // Main text
     doc.restore();
 
-    // Beautiful subtitle section
-    doc.fillColor(colors.white).opacity(0.9);
-    doc.fontSize(14).font('Helvetica');
-    doc.text(`Subject: ${subject}`, 40, 55);
-    doc.text(`Department: ${branch}`, 250, 55);
-    doc.text(`Academic Year: ${selectedYear}`, 450, 55);
-    doc.text(`Month: ${monthNames[selectedMonth]} ${selectedYear}`, 40, 75);
-    doc.text(`Total Students: ${students.length}`, 250, 75);
-    doc.text(`Generated: ${new Date().toLocaleDateString('en-IN')}`, 450, 75);
+    // Optimized subtitle section
+    doc.fillColor(colors.white).fontSize(12).font('Helvetica');
+    doc.text(`Subject: ${subject} | Department: ${branch} | Academic Year: ${selectedYear}`, 40, 50);
+    doc.text(`Month: ${monthNames[selectedMonth]} ${selectedYear} | Total Students: ${students.length}`, 40, 68);
 
-    // Decorative line
-    doc.strokeColor(colors.white).opacity(0.7).lineWidth(2);
-    doc.moveTo(40, 100).lineTo(doc.page.width - 40, 100).stroke();
+    // Simple decorative line
+    doc.strokeColor(colors.white).lineWidth(2);
+    doc.moveTo(40, 85).lineTo(doc.page.width - 40, 85).stroke();
 
-    doc.y = headerHeight + 20;
+    doc.y = headerHeight + 15;
 
-    // STATISTICS DASHBOARD
-    const dashboardY = doc.y;
+    // OPTIMIZED STATISTICS SECTION
     let totalPresent = 0;
     let totalAbsent = 0;
     let totalMarked = 0;
 
-    // Calculate overall statistics
+    // Pre-calculate all statistics
     students.forEach(student => {
       const studentAttendance = attendanceByRollNumber.get(student.rollNumber.toString()) || new Map();
       for (let day = 1; day <= daysInMonth; day++) {
@@ -644,120 +605,84 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     const overallPercentage = totalMarked > 0 ? (totalPresent / totalMarked) * 100 : 0;
 
-    // Statistics cards
-    const cardWidth = 150;
-    const cardHeight = 60;
-    const cardSpacing = 20;
-    let cardX = 40;
-
-    // Overall Attendance Card
-    drawRoundedRect(cardX, dashboardY, cardWidth, cardHeight, 8);
-    doc.fill(colors.light);
-    doc.strokeColor(colors.primary).lineWidth(1).stroke();
+    // Simple but beautiful stats cards
+    const cardY = doc.y;
+    const cardWidth = 160;
+    const cardHeight = 50;
     
-    doc.fillColor(colors.primary).fontSize(24).font('Helvetica-Bold');
-    doc.text(`${overallPercentage.toFixed(1)}%`, cardX + 10, dashboardY + 10, { width: cardWidth - 20, align: 'center' });
-    doc.fillColor(colors.muted).fontSize(10).font('Helvetica');
-    doc.text('Overall Attendance', cardX + 10, dashboardY + 38, { width: cardWidth - 20, align: 'center' });
-    cardX += cardWidth + cardSpacing;
+    // Overall Attendance Card
+    doc.roundedRect(40, cardY, cardWidth, cardHeight, 6)
+       .fill(colors.light)
+       .strokeColor(colors.primary)
+       .lineWidth(2)
+       .stroke();
+    
+    doc.fillColor(colors.primary).fontSize(20).font('Helvetica-Bold');
+    doc.text(`${overallPercentage.toFixed(1)}%`, 50, cardY + 8, { width: cardWidth - 20, align: 'center' });
+    doc.fillColor(colors.muted).fontSize(9).font('Helvetica');
+    doc.text('Overall Attendance', 50, cardY + 32, { width: cardWidth - 20, align: 'center' });
 
     // Present Days Card
-    drawRoundedRect(cardX, dashboardY, cardWidth, cardHeight, 8);
-    doc.fill(colors.light);
-    doc.strokeColor(colors.success).lineWidth(1).stroke();
+    doc.roundedRect(220, cardY, cardWidth, cardHeight, 6)
+       .fill(colors.light)
+       .strokeColor(colors.success)
+       .lineWidth(2)
+       .stroke();
     
-    doc.fillColor(colors.success).fontSize(24).font('Helvetica-Bold');
-    doc.text(totalPresent.toString(), cardX + 10, dashboardY + 10, { width: cardWidth - 20, align: 'center' });
-    doc.fillColor(colors.muted).fontSize(10).font('Helvetica');
-    doc.text('Total Present Days', cardX + 10, dashboardY + 38, { width: cardWidth - 20, align: 'center' });
-    cardX += cardWidth + cardSpacing;
+    doc.fillColor(colors.success).fontSize(20).font('Helvetica-Bold');
+    doc.text(totalPresent.toString(), 230, cardY + 8, { width: cardWidth - 20, align: 'center' });
+    doc.fillColor(colors.muted).fontSize(9).font('Helvetica');
+    doc.text('Total Present Days', 230, cardY + 32, { width: cardWidth - 20, align: 'center' });
 
     // Absent Days Card
-    drawRoundedRect(cardX, dashboardY, cardWidth, cardHeight, 8);
-    doc.fill(colors.light);
-    doc.strokeColor(colors.danger).lineWidth(1).stroke();
+    doc.roundedRect(400, cardY, cardWidth, cardHeight, 6)
+       .fill(colors.light)
+       .strokeColor(colors.danger)
+       .lineWidth(2)
+       .stroke();
     
-    doc.fillColor(colors.danger).fontSize(24).font('Helvetica-Bold');
-    doc.text(totalAbsent.toString(), cardX + 10, dashboardY + 10, { width: cardWidth - 20, align: 'center' });
-    doc.fillColor(colors.muted).fontSize(10).font('Helvetica');
-    doc.text('Total Absent Days', cardX + 10, dashboardY + 38, { width: cardWidth - 20, align: 'center' });
-    cardX += cardWidth + cardSpacing;
+    doc.fillColor(colors.danger).fontSize(20).font('Helvetica-Bold');
+    doc.text(totalAbsent.toString(), 410, cardY + 8, { width: cardWidth - 20, align: 'center' });
+    doc.fillColor(colors.muted).fontSize(9).font('Helvetica');
+    doc.text('Total Absent Days', 410, cardY + 32, { width: cardWidth - 20, align: 'center' });
 
-    // Working Days Card
-    drawRoundedRect(cardX, dashboardY, cardWidth, cardHeight, 8);
-    doc.fill(colors.light);
-    doc.strokeColor(colors.secondary).lineWidth(1).stroke();
-    
-    doc.fillColor(colors.secondary).fontSize(24).font('Helvetica-Bold');
-    doc.text(daysInMonth.toString(), cardX + 10, dashboardY + 10, { width: cardWidth - 20, align: 'center' });
-    doc.fillColor(colors.muted).fontSize(10).font('Helvetica');
-    doc.text('Total Days', cardX + 10, dashboardY + 38, { width: cardWidth - 20, align: 'center' });
+    doc.y = cardY + cardHeight + 20;
 
-    doc.y = dashboardY + cardHeight + 30;
-
-    // ATTENDANCE TABLE WITH PREMIUM STYLING
+    // OPTIMIZED TABLE DESIGN
     const tableStartY = doc.y;
     const pageWidth = doc.page.width - 60;
     
-    // Calculate optimal column widths
-    const baseColWidth = 18;
-    const dayColWidth = Math.max(baseColWidth, (pageWidth - 400) / daysInMonth);
-    const headers = ['#', 'Roll No', 'Student Name', ...Array.from({ length: daysInMonth }, (_, i) => (i + 1).toString()), 'Present', 'Absent', 'Percentage'];
-    const columnWidths = [30, 70, 140, ...Array(daysInMonth).fill(dayColWidth), 45, 45, 55];
+    // Calculate column widths efficiently
+    const baseColWidth = Math.max(18, (pageWidth - 400) / daysInMonth);
+    const headers = ['#', 'Roll No', 'Student Name', ...Array.from({ length: daysInMonth }, (_, i) => (i + 1).toString()), 'P', 'A', '%'];
+    const columnWidths = [30, 60, 130, ...Array(daysInMonth).fill(baseColWidth), 35, 35, 45];
 
-    // Beautiful table header with gradient
-    const headerRect = drawRoundedRect(30, tableStartY, pageWidth, 35, 8);
-    drawGradientRect(30, tableStartY, pageWidth, 35, colors.primary, colors.secondary);
-    
-    // Header shadow effect
-    doc.save();
-    doc.fillColor(colors.shadow);
-    drawRoundedRect(32, tableStartY + 2, pageWidth, 35, 8);
-    doc.fill();
-    doc.restore();
+    // Beautiful table header
+    const headerGradient = doc.linearGradient(30, tableStartY, 30, tableStartY + 30);
+    headerGradient.stop(0, colors.primary).stop(1, colors.secondary);
+    doc.roundedRect(30, tableStartY, pageWidth, 30, 6).fill(headerGradient);
 
-    // Header text with beautiful typography
-    doc.font('Helvetica-Bold').fillColor(colors.white).fontSize(10);
-    
+    // Header text
+    doc.font('Helvetica-Bold').fillColor(colors.white).fontSize(9);
     let x = 30;
     headers.forEach((header, i) => {
-      const textY = tableStartY + 12;
-      if (i < 3 || i >= headers.length - 3) {
-        // Main headers
-        doc.text(header, x + 3, textY, { 
-          width: columnWidths[i] - 6, 
-          align: 'center',
-          baseline: 'middle'
-        });
-      } else {
-        // Day numbers with better formatting
-        const dayNum = parseInt(header);
-        const date = new Date(selectedYear, selectedMonth, dayNum);
-        const dayName = date.toLocaleDateString('en-US', { weekday: 'short' }).substring(0, 1);
-        
-        doc.fontSize(9).text(header, x + 3, textY - 2, { 
-          width: columnWidths[i] - 6, 
-          align: 'center' 
-        });
-        doc.fontSize(7).text(dayName, x + 3, textY + 8, { 
-          width: columnWidths[i] - 6, 
-          align: 'center' 
-        });
-      }
+      doc.text(header, x + 2, tableStartY + 10, { 
+        width: columnWidths[i] - 4, 
+        align: 'center'
+      });
       x += columnWidths[i];
     });
 
-    doc.y = tableStartY + 35;
+    doc.y = tableStartY + 30;
 
-    // Student rows with alternating colors and hover effects
-    let rowIndex = 0;
-    const rowHeight = 28;
+    // HIGHLY OPTIMIZED STUDENT ROWS
+    const rowHeight = 22;
+    let processedCount = 0;
 
-    for (let i = 0; i < students.length; i++) {
-      const student = students[i];
+    for (const student of students) {
       const studentAttendance = attendanceByRollNumber.get(student.rollNumber.toString()) || new Map();
       
-      // Calculate student statistics
+      // Calculate statistics once
       let presentCount = 0;
       let absentCount = 0;
       
@@ -772,202 +697,147 @@ exports.generateAttendanceRegister = async (req, res) => {
       
       const currentY = doc.y;
 
-      // Beautiful row background with subtle gradients
-      if (i % 2 === 0) {
-        drawRoundedRect(30, currentY, pageWidth, rowHeight, 4);
-        doc.fill(colors.light);
-      } else {
-        drawRoundedRect(30, currentY, pageWidth, rowHeight, 4);
-        doc.fill(colors.white);
+      // Simple alternating background
+      if (processedCount % 2 === 0) {
+        doc.rect(30, currentY, pageWidth, rowHeight).fill(colors.light);
       }
 
-      // Add subtle border
-      doc.strokeColor(colors.border).lineWidth(0.5);
-      drawRoundedRect(30, currentY, pageWidth, rowHeight, 4);
-      doc.stroke();
+      // Performance indicator (simple colored left border)
+      const accentColor = percentage >= 75 ? colors.success : 
+                         percentage >= 60 ? colors.warning : colors.danger;
+      doc.rect(30, currentY, 3, rowHeight).fill(accentColor);
 
-      // Performance-based row accent (left border)
-      let accentColor = colors.success;
-      if (percentage < 60) accentColor = colors.danger;
-      else if (percentage < 75) accentColor = colors.warning;
-      
-      doc.rect(30, currentY, 4, rowHeight).fill(accentColor);
-
-      // Student data with beautiful typography
+      // Student data with optimized rendering
       x = 30;
-      const textY = currentY + (rowHeight / 2) - 4;
+      const textY = currentY + 7;
       
       // Serial number
-      doc.fillColor(colors.muted).fontSize(9).font('Helvetica-Bold');
-      doc.text((i + 1).toString(), x + 3, textY, { 
-        width: columnWidths[0] - 6, align: 'center' 
+      doc.fillColor(colors.muted).fontSize(8).font('Helvetica-Bold');
+      doc.text((processedCount + 1).toString(), x + 2, textY, { 
+        width: columnWidths[0] - 4, align: 'center' 
       });
       x += columnWidths[0];
 
-      // Roll Number with styling
-      doc.fillColor(colors.primary).fontSize(9).font('Helvetica-Bold');
-      doc.text(student.rollNumber.toString(), x + 3, textY, { 
-        width: columnWidths[1] - 6, align: 'center' 
+      // Roll Number
+      doc.fillColor(colors.primary).fontSize(8).font('Helvetica-Bold');
+      doc.text(student.rollNumber.toString(), x + 2, textY, { 
+        width: columnWidths[1] - 4, align: 'center' 
       });
       x += columnWidths[1];
 
-      // Student name with proper truncation
-      doc.fillColor(colors.text).fontSize(9).font('Helvetica');
-      const displayName = student.name.length > 20 ? student.name.substring(0, 20) + '...' : student.name;
-      doc.text(displayName, x + 5, textY, { 
-        width: columnWidths[2] - 10, align: 'left' 
+      // Student name (optimized truncation)
+      doc.fillColor(colors.text).fontSize(8).font('Helvetica');
+      const displayName = student.name.length > 18 ? student.name.substring(0, 18) + '...' : student.name;
+      doc.text(displayName, x + 3, textY, { 
+        width: columnWidths[2] - 6, align: 'left' 
       });
       x += columnWidths[2];
 
-      // Daily attendance with beautiful status indicators
+      // Daily attendance (simplified but still beautiful)
+      doc.fontSize(7).font('Helvetica-Bold');
       for (let day = 1; day <= daysInMonth; day++) {
         const status = studentAttendance.get(day);
-        const cellX = x;
         
         if (status === 'present') {
-          // Present - Green circle with checkmark
-          doc.circle(cellX + (columnWidths[day + 2] / 2), currentY + (rowHeight / 2), 6)
-             .fill(colors.success);
-          doc.fillColor(colors.white).fontSize(8).font('Helvetica-Bold');
-          doc.text('P', cellX + 3, textY, { 
-            width: columnWidths[day + 2] - 6, align: 'center' 
+          doc.fillColor(colors.success).text('P', x + 2, textY, { 
+            width: columnWidths[day + 2] - 4, align: 'center' 
           });
         } else if (status === 'absent') {
-          // Absent - Red circle with X
-          doc.circle(cellX + (columnWidths[day + 2] / 2), currentY + (rowHeight / 2), 6)
-             .fill(colors.danger);
-          doc.fillColor(colors.white).fontSize(8).font('Helvetica-Bold');
-          doc.text('A', cellX + 3, textY, { 
-            width: columnWidths[day + 2] - 6, align: 'center' 
+          doc.fillColor(colors.danger).text('A', x + 2, textY, { 
+            width: columnWidths[day + 2] - 4, align: 'center' 
           });
         } else {
-          // Not marked - Light gray circle
-          doc.circle(cellX + (columnWidths[day + 2] / 2), currentY + (rowHeight / 2), 4)
-             .fill(colors.border);
-          doc.fillColor(colors.muted).fontSize(7).font('Helvetica');
-          doc.text('-', cellX + 3, textY, { 
-            width: columnWidths[day + 2] - 6, align: 'center' 
+          doc.fillColor(colors.muted).text('—', x + 2, textY, { 
+            width: columnWidths[day + 2] - 4, align: 'center' 
           });
         }
         x += columnWidths[day + 2];
       }
 
-      // Summary columns with beautiful styling
-      // Present count
-      doc.fillColor(colors.white).fontSize(8);
-      doc.roundedRect(x + 2, currentY + 4, columnWidths[daysInMonth + 3] - 4, rowHeight - 8, 3)
-         .fill(colors.success);
-      doc.fillColor(colors.white).font('Helvetica-Bold');
-      doc.text(presentCount.toString(), x + 3, textY, { 
-        width: columnWidths[daysInMonth + 3] - 6, align: 'center' 
+      // Summary columns
+      doc.fillColor(colors.success).fontSize(8).font('Helvetica-Bold');
+      doc.text(presentCount.toString(), x + 2, textY, { 
+        width: columnWidths[daysInMonth + 3] - 4, align: 'center' 
       });
       x += columnWidths[daysInMonth + 3];
 
-      // Absent count
-      doc.roundedRect(x + 2, currentY + 4, columnWidths[daysInMonth + 4] - 4, rowHeight - 8, 3)
-         .fill(colors.danger);
-      doc.fillColor(colors.white).font('Helvetica-Bold');
-      doc.text(absentCount.toString(), x + 3, textY, { 
-        width: columnWidths[daysInMonth + 4] - 6, align: 'center' 
+      doc.fillColor(colors.danger);
+      doc.text(absentCount.toString(), x + 2, textY, { 
+        width: columnWidths[daysInMonth + 4] - 4, align: 'center' 
       });
       x += columnWidths[daysInMonth + 4];
 
-      // Percentage with gradient background
+      // Percentage with color coding
       const percentColor = percentage >= 75 ? colors.success : 
                           percentage >= 60 ? colors.warning : colors.danger;
-      
-      doc.roundedRect(x + 2, currentY + 4, columnWidths[daysInMonth + 5] - 4, rowHeight - 8, 3)
-         .fill(percentColor);
-      doc.fillColor(colors.white).fontSize(9).font('Helvetica-Bold');
-      doc.text(`${percentage}%`, x + 3, textY, { 
-        width: columnWidths[daysInMonth + 5] - 6, align: 'center' 
+      doc.fillColor(percentColor).fontSize(8).font('Helvetica-Bold');
+      doc.text(`${percentage}%`, x + 2, textY, { 
+        width: columnWidths[daysInMonth + 5] - 4, align: 'center' 
       });
 
       doc.y = currentY + rowHeight;
-      rowIndex++;
+      processedCount++;
 
-      // Page break with header repeat
-      if (doc.y > doc.page.height - 100) {
-        // Add beautiful footer before page break
-        doc.y = doc.page.height - 60;
-        doc.strokeColor(colors.border).lineWidth(1);
-        doc.moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
-        
-        doc.fillColor(colors.muted).fontSize(8).font('Helvetica');
-        doc.text(`Page ${doc.bufferedPageRange().count}`, 30, doc.y + 10);
-        doc.text(`Generated by Academic Management System`, doc.page.width - 200, doc.y + 10);
-        
+      // Page break check
+      if (doc.y > doc.page.height - 80) {
         doc.addPage({ margin: 30, size: 'A4', layout: 'landscape' });
         
-        // Repeat header on new page
-        drawGradientRect(30, 40, pageWidth, 35, colors.primary, colors.secondary);
-        doc.font('Helvetica-Bold').fillColor(colors.white).fontSize(10);
+        // Repeat header
+        const newHeaderGradient = doc.linearGradient(30, 40, 30, 70);
+        newHeaderGradient.stop(0, colors.primary).stop(1, colors.secondary);
+        doc.roundedRect(30, 40, pageWidth, 30, 6).fill(newHeaderGradient);
+        
+        doc.font('Helvetica-Bold').fillColor(colors.white).fontSize(9);
         x = 30;
         headers.forEach((header, i) => {
-          doc.text(header, x + 3, 52, { width: columnWidths[i] - 6, align: 'center' });
+          doc.text(header, x + 2, 50, { width: columnWidths[i] - 4, align: 'center' });
           x += columnWidths[i];
         });
-        doc.y = 80;
+        doc.y = 75;
       }
 
-      // Progress logging
-      if (i > 0 && i % 25 === 0) {
+      // Yield control every 20 students for better performance
+      if (processedCount % 20 === 0) {
         await new Promise(resolve => setImmediate(resolve));
-        console.log(`Processed ${i}/${students.length} students`);
+        console.log(`Processed ${processedCount}/${students.length} students`);
       }
     }
 
-    // BEAUTIFUL FOOTER SECTION
-    doc.y += 20;
-
-    // Footer separator
-    doc.strokeColor(colors.primary).lineWidth(2);
-    doc.moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
+    // BEAUTIFUL FOOTER
     doc.y += 15;
 
-    // Summary statistics in a beautiful layout
-    const summaryY = doc.y;
-    
-    // Summary background
-    drawRoundedRect(30, summaryY, pageWidth, 80, 10);
-    doc.fill(colors.light);
-    doc.strokeColor(colors.border).lineWidth(1).stroke();
+    // Footer separator
+    doc.strokeColor(colors.primary).lineWidth(1);
+    doc.moveTo(30, doc.y).lineTo(doc.page.width - 30, doc.y).stroke();
+    doc.y += 10;
 
-    // Summary content
-    doc.fillColor(colors.primary).fontSize(14).font('Helvetica-Bold');
-    doc.text('ATTENDANCE SUMMARY', 50, summaryY + 15);
+    // Summary section
+    doc.roundedRect(30, doc.y, pageWidth, 60, 8)
+       .fill(colors.light)
+       .strokeColor(colors.border)
+       .lineWidth(1)
+       .stroke();
 
-    doc.fillColor(colors.text).fontSize(11).font('Helvetica');
-    doc.text(`Total Students: ${students.length}`, 50, summaryY + 35);
-    doc.text(`Overall Attendance: ${overallPercentage.toFixed(2)}%`, 250, summaryY + 35);
-    doc.text(`Total Present Days: ${totalPresent}`, 450, summaryY + 35);
+    doc.fillColor(colors.primary).fontSize(12).font('Helvetica-Bold');
+    doc.text('ATTENDANCE SUMMARY', 40, doc.y + 10);
 
-    doc.text(`Academic Month: ${monthNames[selectedMonth]} ${selectedYear}`, 50, summaryY + 50);
-    doc.text(`Subject: ${subject}`, 250, summaryY + 50);
-    doc.text(`Department: ${branch}`, 450, summaryY + 50);
+    doc.fillColor(colors.text).fontSize(10).font('Helvetica');
+    doc.text(`Total Students: ${students.length} | Overall Attendance: ${overallPercentage.toFixed(2)}% | Subject: ${subject}`, 40, doc.y + 28);
+    doc.text(`Department: ${branch} | Month: ${monthNames[selectedMonth]} ${selectedYear}`, 40, doc.y + 42);
 
-    // Generation timestamp
-    doc.fillColor(colors.muted).fontSize(9).font('Helvetica');
-    doc.text(`Report generated on ${new Date().toLocaleString('en-IN', { 
-      timeZone: 'Asia/Kolkata',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })}`, 50, summaryY + 65);
+    // Generation info
+    doc.fillColor(colors.muted).fontSize(8);
+    doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, 40, doc.y + 50);
+    doc.text('Authorized Signature: ________________________', doc.page.width - 220, doc.y + 50);
 
-    // Beautiful signature area
-    doc.text('Authorized Signature: ________________________', doc.page.width - 250, summaryY + 65);
-
-    console.log('Finalizing beautiful PDF...');
+    console.log('Finalizing optimized beautiful PDF...');
 
     // Finalize PDF
     doc.end();
 
-    // Handle file completion and sending
+    // Handle completion with proper timeout
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('PDF generation timeout')), 240000);
+      setTimeout(() => reject(new Error('PDF generation timeout')), 180000); // Reduced to 3 minutes
     });
 
     const streamPromise = new Promise((resolve, reject) => {
@@ -977,7 +847,7 @@ exports.generateAttendanceRegister = async (req, res) => {
 
     try {
       await Promise.race([streamPromise, timeoutPromise]);
-      console.log('Beautiful PDF generation completed successfully');
+      console.log('Optimized beautiful PDF generation completed successfully');
 
       res.download(filePath, fileName, (err) => {
         if (err) {
@@ -1017,7 +887,7 @@ exports.generateAttendanceRegister = async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Error generating beautiful attendance register:', error);
+    console.error('Error generating optimized attendance register:', error);
     
     if (!res.headersSent) {
       res.status(500).json({ 
