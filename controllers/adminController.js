@@ -823,11 +823,10 @@ exports.generateAttendanceRegister = async (req, res) => {
       for (let day = 1; day <= daysInMonth; day++) {
         const status = studentAttendance.get(day);
         const cellX = x;
-        const cellY = currentY;
         
         if (status === 'present') {
           // Present - Green circle with checkmark
-          doc.circle(cellX + (columnWidths[day + 2] / 2), cellY + (rowHeight / 2), 6)
+          doc.circle(cellX + (columnWidths[day + 2] / 2), currentY + (rowHeight / 2), 6)
              .fill(colors.success);
           doc.fillColor(colors.white).fontSize(8).font('Helvetica-Bold');
           doc.text('P', cellX + 3, textY, { 
@@ -835,7 +834,7 @@ exports.generateAttendanceRegister = async (req, res) => {
           });
         } else if (status === 'absent') {
           // Absent - Red circle with X
-          doc.circle(cellX + (columnWidths[day + 2] / 2), cellY + (rowHeight / 2), 6)
+          doc.circle(cellX + (columnWidths[day + 2] / 2), currentY + (rowHeight / 2), 6)
              .fill(colors.danger);
           doc.fillColor(colors.white).fontSize(8).font('Helvetica-Bold');
           doc.text('A', cellX + 3, textY, { 
@@ -843,7 +842,7 @@ exports.generateAttendanceRegister = async (req, res) => {
           });
         } else {
           // Not marked - Light gray circle
-          doc.circle(cellX + (columnWidths[day + 2] / 2), cellY + (rowHeight / 2), 4)
+          doc.circle(cellX + (columnWidths[day + 2] / 2), currentY + (rowHeight / 2), 4)
              .fill(colors.border);
           doc.fillColor(colors.muted).fontSize(7).font('Helvetica');
           doc.text('-', cellX + 3, textY, { 
@@ -856,7 +855,7 @@ exports.generateAttendanceRegister = async (req, res) => {
       // Summary columns with beautiful styling
       // Present count
       doc.fillColor(colors.white).fontSize(8);
-      doc.roundedRect(x + 2, cellY + 4, columnWidths[daysInMonth + 3] - 4, rowHeight - 8, 3)
+      doc.roundedRect(x + 2, currentY + 4, columnWidths[daysInMonth + 3] - 4, rowHeight - 8, 3)
          .fill(colors.success);
       doc.fillColor(colors.white).font('Helvetica-Bold');
       doc.text(presentCount.toString(), x + 3, textY, { 
@@ -865,7 +864,7 @@ exports.generateAttendanceRegister = async (req, res) => {
       x += columnWidths[daysInMonth + 3];
 
       // Absent count
-      doc.roundedRect(x + 2, cellY + 4, columnWidths[daysInMonth + 4] - 4, rowHeight - 8, 3)
+      doc.roundedRect(x + 2, currentY + 4, columnWidths[daysInMonth + 4] - 4, rowHeight - 8, 3)
          .fill(colors.danger);
       doc.fillColor(colors.white).font('Helvetica-Bold');
       doc.text(absentCount.toString(), x + 3, textY, { 
@@ -877,7 +876,7 @@ exports.generateAttendanceRegister = async (req, res) => {
       const percentColor = percentage >= 75 ? colors.success : 
                           percentage >= 60 ? colors.warning : colors.danger;
       
-      doc.roundedRect(x + 2, cellY + 4, columnWidths[daysInMonth + 5] - 4, rowHeight - 8, 3)
+      doc.roundedRect(x + 2, currentY + 4, columnWidths[daysInMonth + 5] - 4, rowHeight - 8, 3)
          .fill(percentColor);
       doc.fillColor(colors.white).fontSize(9).font('Helvetica-Bold');
       doc.text(`${percentage}%`, x + 3, textY, { 
