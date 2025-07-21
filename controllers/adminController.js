@@ -1067,50 +1067,19 @@ exports.generateAttendanceRegister = async (req, res) => {
 // Add to adminController.js
 exports.generateSubjectWiseReport = async (req, res) => {
   try {
-    // Set timeout to 5 minutes for large reports
-    res.setTimeout(300000);
-
     const { year, branch, startDate, endDate } = req.body;
 
-    // Validate inputs
-    if (!year || !branch || !startDate || !endDate) {
-      return res.status(400).json({
-        success: false,
-        message: 'Year, branch, start date, and end date are required'
-      });
-    }
-
-    // Convert dates to proper format
+    // Convert dates and include full day for end date
     const start = new Date(startDate);
     const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999); // Include the entire end date
+    end.setHours(23, 59, 59, 999);
 
-    console.log('Fetching classes and attendance data...');
-
-    // OPTIMIZATION: Fetch data in parallel
-    const [classes, students, allAttendance] = await Promise.all([
-      Class.find({
-        year,
-        branch,
-        date: { $gte: startDate, $lte: endDate }
-      }).lean(),
-
-      Student.find({
-        year,
-        department: branch
-      }).sort('rollNumber').lean(),
-
-      Attendance.find({
-        time: { $gte: start, $lte: end }
-      }).lean()
-    ]);
-
-    if (students.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'No students found for the selected criteria'
-      });
-    }
+    // Find classes with case-insensitive branch matching
+    const classes = await Class.find({
+      year: year.toString(),
+      branch: { $regex: new RegExp(branch, 'i') },
+      date: { $gte: start, $lte: end }
+    });
 
     if (classes.length === 0) {
       return res.status(404).json({
@@ -1119,22 +1088,25 @@ exports.generateSubjectWiseReport = async (req, res) => {
       });
     }
 
-    console.log(`Processing ${students.length} students and ${classes.length} classes...`);
+    // Get all students in the branch/year
+    const students = await Student.find({
+      year: year.toString(),
+      department: { $regex: new RegExp(branch, 'i') }
+    }).sort('rollNumber');
 
-    // Get all unique subjects
-    const subjects = [...new Set(classes.map(c => c.subject))];
-    const classIds = classes.map(c => c._id.toString());
+    if (students.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No students found for the selected criteria'
+      });
+    }
 
-    // Pre-process attendance data for faster lookups
-    const attendanceMap = new Map();
-    allAttendance.forEach(record => {
-      if (classIds.includes(record.classId.toString())) {
-        const key = `${record.rollNumber}_${record.classId}`;
-        attendanceMap.set(key, record.status);
-      }
+    // Get attendance records for these classes
+    const attendanceRecords = await Attendance.find({
+      classId: { $in: classes.map(c => c._id) }
     });
 
-    // Process each student's attendance
+    // Process report data
     const reportData = students.map(student => {
       const studentReport = {
         rollNumber: student.rollNumber,
@@ -1144,41 +1116,36 @@ exports.generateSubjectWiseReport = async (req, res) => {
         totalClasses: 0
       };
 
-      // Initialize subject counters
-      subjects.forEach(subject => {
-        studentReport.subjects[subject] = { present: 0, total: 0 };
-      });
-
-      // Process each class for this student
-      classes.forEach(classInfo => {
-        const key = `${student.rollNumber}_${classInfo._id}`;
-        const status = attendanceMap.get(key);
+      classes.forEach(cls => {
+        const attendance = attendanceRecords.find(
+          a => a.classId.equals(cls._id) && a.rollNumber === student.rollNumber
+        );
         
-        if (status) {
-          studentReport.subjects[classInfo.subject].total++;
-          studentReport.totalClasses++;
-          
-          if (status === 'Present') {
-            studentReport.subjects[classInfo.subject].present++;
-            studentReport.totalPresent++;
-          }
+        if (!studentReport.subjects[cls.subject]) {
+          studentReport.subjects[cls.subject] = { present: 0, total: 0 };
+        }
+
+        studentReport.subjects[cls.subject].total++;
+        studentReport.totalClasses++;
+        
+        if (attendance?.status === 'Present') {
+          studentReport.subjects[cls.subject].present++;
+          studentReport.totalPresent++;
         }
       });
 
       // Calculate percentages
-      subjects.forEach(subject => {
+      Object.keys(studentReport.subjects).forEach(subject => {
         const sub = studentReport.subjects[subject];
         studentReport[subject] = sub.total > 0 
-          ? Math.round((sub.present / sub.total) * 100) + '%' 
+          ? `${Math.round((sub.present / sub.total) * 100)}%` 
           : 'N/A';
       });
 
-      // Calculate average attendance
-      const avgAttendance = studentReport.totalClasses > 0
-        ? Math.round((studentReport.totalPresent / studentReport.totalClasses) * 10000) / 100
-        : 0;
-
-      studentReport.avgAttendance = avgAttendance + '%';
+      // Calculate average
+      studentReport.avgAttendance = studentReport.totalClasses > 0
+        ? `${Math.round((studentReport.totalPresent / studentReport.totalClasses) * 100)}%`
+        : '0%';
 
       return studentReport;
     });
