@@ -273,7 +273,7 @@ exports.fetchClasses=async (req, res) => {
 exports.updateClass = async (req, res) => {
   try {
     console.log('Updating class:', req.params.id);
-    const updated = await AddClass.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const updated = await ClassModel.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!updated) return res.status(404).json({ message: 'Class not found' });
     res.json({ message: 'Class updated successfully', class: updated });
   } catch (err) {
@@ -286,7 +286,7 @@ exports.updateClass = async (req, res) => {
 exports.deleteClass = async (req, res) => {
   try {
     const { id } = req.params;
-    const deleted = await AddClass.findByIdAndDelete(id);
+    const deleted = await ClassModel.findByIdAndDelete(id);
     if (!deleted) return res.status(404).json({ message: 'Class not found' });
     res.json({ message: 'Class deleted successfully' });
   } catch (err) {
