@@ -566,13 +566,32 @@ exports.generateAttendanceRegister = async (req, res) => {
     };
 
     // SIMPLIFIED HEADER (faster rendering)
-    doc.rect(0, 0, doc.page.width, 80).fill(colors.primary);
-    doc.fillColor('#ffffff').fontSize(20).font('Helvetica-Bold')
-       .text('ATTENDANCE REGISTER', 40, 25);
-    doc.fontSize(12).font('Helvetica')
-       .text(`${subject} - ${branch} - ${monthNames[selectedMonth]} ${selectedYear}`, 40, 50);
+    // UPDATED HEADER SECTION with College Name
+doc.rect(0, 0, doc.page.width, 100).fill(colors.primary);
 
-    doc.y = 100;
+// College Name
+doc.fillColor('#ffffff').fontSize(18).font('Helvetica-Bold')
+   .text('KAMLA NEHRU INSTITUTE OF TECHNOLOGY', 40, 15, {
+     width: doc.page.width - 80,
+     align: 'center'
+   });
+
+// Attendance Record heading
+doc.fontSize(16).font('Helvetica-Bold')
+   .text('ATTENDANCE RECORD', 40, 40, {
+     width: doc.page.width - 80,
+     align: 'center'
+   });
+
+// Subject, Branch, Year, Month details
+doc.fontSize(12).font('Helvetica')
+   .text(`Subject: ${subject} | Branch: ${branch} | Year: ${year} | Month: ${monthNames[selectedMonth]} ${selectedYear}`, 40, 65, {
+     width: doc.page.width - 80,
+     align: 'center'
+   });
+
+// Update the starting Y position for the table
+doc.y = 120;
 
     // SIMPLIFIED TABLE LAYOUT
     const tableStartY = doc.y;
