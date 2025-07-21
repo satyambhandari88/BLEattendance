@@ -429,6 +429,74 @@ exports.addSubject = async (req, res) => {
 
 
 
+// Fetch all subjects
+exports.getAllSubjects = async (req, res) => {
+  try {
+    const subjects = await Subject.find().select('_id name'); // Only get id and name
+    res.status(200).json({ success: true, subjects });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to fetch subjects', error: err.message });
+  }
+};
+
+
+
+exports.updateSubject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ success: false, message: 'Subject name is required' });
+    }
+
+    const subject = await Subject.findById(id);
+    if (!subject) {
+      return res.status(404).json({ success: false, message: 'Subject not found' });
+    }
+
+    const existingSubject = await Subject.findOne({ name, _id: { $ne: id } });
+    if (existingSubject) {
+      return res.status(400).json({ success: false, message: 'Subject name already exists' });
+    }
+
+    subject.name = name;
+    await subject.save();
+
+    res.json({ success: true, message: 'Subject updated successfully', subject });
+  } catch (err) {
+    console.error(err);
+    if (err.kind === 'ObjectId') {
+      return res.status(400).json({ success: false, message: 'Invalid subject ID' });
+    }
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// Delete subject
+exports.deleteSubject = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const subject = await Subject.findById(id);
+    if (!subject) {
+      return res.status(404).json({ success: false, message: 'Subject not found' });
+    }
+
+    await subject.deleteOne();
+
+    res.json({ success: true, message: 'Subject deleted successfully' });
+  } catch (err) {
+    console.error(err);
+    if (err.kind === 'ObjectId') {
+      return res.status(400).json({ success: false, message: 'Invalid subject ID' });
+    }
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+
+
 
 exports.addAcademicStructure = async (req, res) => {
   try {
@@ -446,16 +514,6 @@ exports.addAcademicStructure = async (req, res) => {
 
 
 
-
-// Fetch all subjects
-exports.getAllSubjects = async (req, res) => {
-  try {
-    const subjects = await Subject.find().select('_id name'); // Only get id and name
-    res.status(200).json({ success: true, subjects });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to fetch subjects', error: err.message });
-  }
-};
 
 
 exports.getAcademicStructures = async (req, res) => {
