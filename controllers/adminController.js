@@ -1058,3 +1058,282 @@ exports.generateAttendanceRegister = async (req, res) => {
     }
   }
 };
+
+
+
+
+
+
+// Add to adminController.js
+exports.generateSubjectWiseReport = async (req, res) => {
+  try {
+    // Set timeout to 5 minutes for large reports
+    res.setTimeout(300000);
+
+    const { year, branch, startDate, endDate } = req.body;
+
+    // Validate inputs
+    if (!year || !branch || !startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Year, branch, start date, and end date are required'
+      });
+    }
+
+    // Convert dates to proper format
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999); // Include the entire end date
+
+    console.log('Fetching classes and attendance data...');
+
+    // OPTIMIZATION: Fetch data in parallel
+    const [classes, students, allAttendance] = await Promise.all([
+      Class.find({
+        year,
+        branch,
+        date: { $gte: startDate, $lte: endDate }
+      }).lean(),
+
+      Student.find({
+        year,
+        department: branch
+      }).sort('rollNumber').lean(),
+
+      Attendance.find({
+        time: { $gte: start, $lte: end }
+      }).lean()
+    ]);
+
+    if (students.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No students found for the selected criteria'
+      });
+    }
+
+    if (classes.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No classes found for the selected criteria'
+      });
+    }
+
+    console.log(`Processing ${students.length} students and ${classes.length} classes...`);
+
+    // Get all unique subjects
+    const subjects = [...new Set(classes.map(c => c.subject))];
+    const classIds = classes.map(c => c._id.toString());
+
+    // Pre-process attendance data for faster lookups
+    const attendanceMap = new Map();
+    allAttendance.forEach(record => {
+      if (classIds.includes(record.classId.toString())) {
+        const key = `${record.rollNumber}_${record.classId}`;
+        attendanceMap.set(key, record.status);
+      }
+    });
+
+    // Process each student's attendance
+    const reportData = students.map(student => {
+      const studentReport = {
+        rollNumber: student.rollNumber,
+        name: student.name,
+        subjects: {},
+        totalPresent: 0,
+        totalClasses: 0
+      };
+
+      // Initialize subject counters
+      subjects.forEach(subject => {
+        studentReport.subjects[subject] = { present: 0, total: 0 };
+      });
+
+      // Process each class for this student
+      classes.forEach(classInfo => {
+        const key = `${student.rollNumber}_${classInfo._id}`;
+        const status = attendanceMap.get(key);
+        
+        if (status) {
+          studentReport.subjects[classInfo.subject].total++;
+          studentReport.totalClasses++;
+          
+          if (status === 'Present') {
+            studentReport.subjects[classInfo.subject].present++;
+            studentReport.totalPresent++;
+          }
+        }
+      });
+
+      // Calculate percentages
+      subjects.forEach(subject => {
+        const sub = studentReport.subjects[subject];
+        studentReport[subject] = sub.total > 0 
+          ? Math.round((sub.present / sub.total) * 100) + '%' 
+          : 'N/A';
+      });
+
+      // Calculate average attendance
+      const avgAttendance = studentReport.totalClasses > 0
+        ? Math.round((studentReport.totalPresent / studentReport.totalClasses) * 10000) / 100
+        : 0;
+
+      studentReport.avgAttendance = avgAttendance + '%';
+
+      return studentReport;
+    });
+
+    // Generate PDF
+    const doc = new PDFDocument({ margin: 25, size: 'A4', layout: 'landscape' });
+    const fileName = `subject_wise_report_${year}_${branch}.pdf`;
+    const filePath = `./temp/${fileName}`;
+    
+    if (!fs.existsSync('./temp')) {
+      fs.mkdirSync('./temp', { recursive: true });
+    }
+
+    const stream = fs.createWriteStream(filePath);
+    doc.pipe(stream);
+
+    // Header
+    doc.fillColor('#2563eb').rect(0, 0, doc.page.width, 80).fill();
+    doc.fillColor('#ffffff')
+       .fontSize(16).font('Helvetica-Bold')
+       .text('KAMLA NEHRU INSTITUTE OF TECHNOLOGY', 25, 20, { align: 'center' })
+       .fontSize(14)
+       .text('SUBJECT-WISE ATTENDANCE REPORT', 25, 40, { align: 'center' })
+       .fontSize(10)
+       .text(`${year} Year | ${branch} | ${formatDate(start)} to ${formatDate(end)}`, 25, 60, { align: 'center' });
+
+    // Table setup
+    const startY = 100;
+    const columnWidths = [60, 120, ...Array(subjects.length).fill(60), 80];
+    const headers = ['Roll No', 'Name', ...subjects, 'Avg Attendance'];
+
+    // Draw table header
+    doc.fillColor('#2563eb').rect(25, startY, doc.page.width - 50, 20).fill();
+    doc.fillColor('#ffffff').fontSize(10).font('Helvetica-Bold');
+    
+    let x = 25;
+    headers.forEach((header, i) => {
+      doc.text(header, x + 5, startY + 5, { width: columnWidths[i] - 10, align: 'center' });
+      x += columnWidths[i];
+    });
+
+    // Draw student rows
+    doc.fontSize(9).font('Helvetica');
+    let y = startY + 20;
+    
+    reportData.forEach((student, index) => {
+      // Alternate row colors
+      if (index % 2 === 0) {
+        doc.fillColor('#f8fafc').rect(25, y, doc.page.width - 50, 20).fill();
+      }
+
+      x = 25;
+      doc.fillColor('#1e293b')
+         .text(student.rollNumber, x + 5, y + 5, { width: columnWidths[0] - 10, align: 'center' });
+      x += columnWidths[0];
+
+      doc.text(student.name, x + 5, y + 5, { width: columnWidths[1] - 10, align: 'left' });
+      x += columnWidths[1];
+
+      // Subject percentages
+      subjects.forEach(subject => {
+        const percentage = student[subject];
+        let color = '#1e293b';
+        
+        if (percentage !== 'N/A') {
+          const percentValue = parseInt(percentage);
+          color = percentValue >= 75 ? '#16a34a' : percentValue >= 60 ? '#d97706' : '#dc2626';
+        }
+        
+        doc.fillColor(color).text(percentage, x + 5, y + 5, { 
+          width: columnWidths[2] - 10, 
+          align: 'center' 
+        });
+        x += columnWidths[2];
+      });
+
+      // Average attendance
+      doc.fillColor('#2563eb').font('Helvetica-Bold')
+         .text(student.avgAttendance, x + 5, y + 5, { 
+           width: columnWidths[columnWidths.length - 1] - 10, 
+           align: 'center' 
+         });
+
+      y += 20;
+      
+      // Add new page if needed
+      if (y > doc.page.height - 50 && index < reportData.length - 1) {
+        doc.addPage({ margin: 25, size: 'A4', layout: 'landscape' });
+        
+        // Draw header on new page
+        doc.fillColor('#2563eb').rect(0, 0, doc.page.width, 60).fill();
+        doc.fillColor('#ffffff')
+           .fontSize(12).font('Helvetica-Bold')
+           .text('SUBJECT-WISE ATTENDANCE REPORT (Continued)', 25, 15, { align: 'center' })
+           .fontSize(9)
+           .text(`${year} Year | ${branch} | Page ${doc.page.number}`, 25, 35, { align: 'center' });
+        
+        // Draw table header again
+        y = 60;
+        doc.fillColor('#2563eb').rect(25, y, doc.page.width - 50, 20).fill();
+        doc.fillColor('#ffffff').fontSize(10).font('Helvetica-Bold');
+        
+        x = 25;
+        headers.forEach((header, i) => {
+          doc.text(header, x + 5, y + 5, { width: columnWidths[i] - 10, align: 'center' });
+          x += columnWidths[i];
+        });
+        
+        y += 20;
+        doc.fontSize(9).font('Helvetica');
+      }
+    });
+
+    doc.end();
+
+    // Wait for PDF generation to complete
+    await new Promise((resolve, reject) => {
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+    });
+
+    // Send the file
+    res.download(filePath, fileName, (err) => {
+      if (err) {
+        console.error('Error sending file:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ success: false, message: 'Error sending file' });
+        }
+      }
+      
+      // Clean up temporary file
+      try {
+        fs.unlinkSync(filePath);
+      } catch (cleanupErr) {
+        console.error('Error cleaning up file:', cleanupErr);
+      }
+    });
+
+  } catch (error) {
+    console.error('Error generating subject-wise report:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        success: false, 
+        message: 'Error generating report',
+        error: error.message 
+      });
+    }
+  }
+};
+
+// Helper function to format dates
+function formatDate(date) {
+  return new Date(date).toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  }).replace(/ /g, '-');
+}
