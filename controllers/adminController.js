@@ -1071,7 +1071,7 @@ exports.generateSubjectWiseReport = async (req, res) => {
   try {
     const { year, branch, startDate, endDate } = req.body;
 
-    console.log('Generating student-wise report with:', { year, branch, startDate, endDate });
+    console.log('Generating beautiful student-wise report with:', { year, branch, startDate, endDate });
 
     // Validate required fields
     if (!year || !branch || !startDate || !endDate) {
@@ -1084,23 +1084,21 @@ exports.generateSubjectWiseReport = async (req, res) => {
     // Parse dates
     const start = new Date(startDate);
     const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999); // Set end date to end of day
+    end.setHours(23, 59, 59, 999);
 
     // Step 1: Find all classes for the given year, branch, and date range
-   const startStr = start.toISOString().split('T')[0];
-const endStr = end.toISOString().split('T')[0];
+    const startStr = start.toISOString().split('T')[0];
+    const endStr = end.toISOString().split('T')[0];
 
-const classes = await AllClass.find({
-  year: year.toString(),
-  branch: branch,
-  date: {
-    $gte: startStr,
-    $lte: endStr
-  },
-  isActive: true
-});
-
-
+    const classes = await AllClass.find({
+      year: year.toString(),
+      branch: branch,
+      date: {
+        $gte: startStr,
+        $lte: endStr
+      },
+      isActive: true
+    });
 
     if (classes.length === 0) {
       return res.status(404).json({
@@ -1139,7 +1137,7 @@ const classes = await AllClass.find({
     // Step 5: Get all unique roll numbers
     const rollNumbers = [...new Set(attendanceRecords.map(record => record.rollNumber))].sort();
 
-    // Step 6: Try to get student names from Student model (optional)
+    // Step 6: Try to get student names from Student model
     let studentNames = {};
     try {
       const students = await Student.find({
@@ -1171,7 +1169,6 @@ const classes = await AllClass.find({
       let subjectCount = 0;
 
       for (const subject of subjects) {
-        // Get all attendance records for this student and subject
         const studentSubjectRecords = attendanceRecords.filter(
           record => record.rollNumber === rollNumber && record.subject === subject
         );
@@ -1182,7 +1179,7 @@ const classes = await AllClass.find({
           ).length;
           
           const totalClasses = studentSubjectRecords.length;
-          const percentage = Math.round((presentCount / totalClasses) * 100 * 100) / 100; // Round to 2 decimal places
+          const percentage = Math.round((presentCount / totalClasses) * 100 * 100) / 100;
           
           studentRecord.subjects[subject] = {
             percentage,
@@ -1201,7 +1198,6 @@ const classes = await AllClass.find({
         }
       }
 
-      // Calculate average attendance
       studentRecord.totalAttendance = subjectCount > 0 
         ? Math.round((totalSubjectPercentages / subjectCount) * 100) / 100 
         : 0;
@@ -1214,27 +1210,95 @@ const classes = await AllClass.find({
 
     console.log(`Generated report for ${reportData.length} students`);
 
-    // Step 8: Generate PDF
+    // Step 8: Generate Beautiful PDF
     const doc = new PDFDocument({ 
       size: 'A4', 
       layout: 'landscape',
-      margin: 30 
+      margin: 40 
     });
 
     // Set response headers
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=Student_Attendance_Report_${year}_${branch.replace(/\s+/g, '_')}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename=Attendance_Report_${year}_${branch.replace(/\s+/g, '_')}_${new Date().getFullYear()}.pdf`);
 
     // Pipe the PDF to response
     doc.pipe(res);
 
-    // Add title
-    doc.fontSize(16).font('Helvetica-Bold');
-    doc.text('📊 Student-wise Attendance Report', { align: 'center' });
-    doc.moveDown(0.5);
+    // Color palette
+    const colors = {
+      primary: '#2563eb',      // Modern blue
+      secondary: '#64748b',    // Slate gray
+      accent: '#06b6d4',       // Cyan
+      success: '#059669',      // Emerald
+      warning: '#d97706',      // Amber
+      danger: '#dc2626',       // Red
+      light: '#f8fafc',        // Very light gray
+      dark: '#0f172a'          // Dark slate
+    };
 
-    // Add filters info
-    doc.fontSize(12).font('Helvetica');
+    // Helper function to draw gradient header
+    const drawGradientHeader = (doc, x, y, width, height) => {
+      // Create gradient effect with multiple rectangles
+      const steps = 20;
+      for (let i = 0; i < steps; i++) {
+        const alpha = 1 - (i / steps) * 0.7;
+        doc.rect(x, y + (i * height / steps), width, height / steps)
+           .fillOpacity(alpha)
+           .fill(colors.primary);
+      }
+      doc.fillOpacity(1); // Reset opacity
+    };
+
+    // Page dimensions
+    const pageWidth = doc.page.width - 80;
+    const margin = 40;
+
+    // HEADER SECTION
+    // Draw beautiful header background
+    drawGradientHeader(doc, margin, 30, pageWidth, 100);
+
+    // Add decorative border
+    doc.rect(margin - 2, 28, pageWidth + 4, 104)
+       .lineWidth(2)
+       .strokeOpacity(0.3)
+       .stroke(colors.primary);
+
+    // Main title
+    doc.fillColor('white')
+       .fontSize(24)
+       .font('Helvetica-Bold')
+       .text('📊 STUDENT ATTENDANCE ANALYTICS', margin + 20, 50, { 
+         align: 'center',
+         width: pageWidth - 40
+       });
+
+    // Subtitle
+    doc.fontSize(12)
+       .font('Helvetica')
+       .text('Comprehensive Academic Performance Report', margin + 20, 80, { 
+         align: 'center',
+         width: pageWidth - 40
+       });
+
+    // Reset color for rest of document
+    doc.fillColor(colors.dark);
+
+    // INFORMATION PANEL
+    let currentY = 160;
+    
+    // Draw info panel background
+    doc.rect(margin, currentY, pageWidth, 80)
+       .fillOpacity(0.05)
+       .fill(colors.primary)
+       .fillOpacity(1);
+
+    // Add border to info panel
+    doc.rect(margin, currentY, pageWidth, 80)
+       .lineWidth(1)
+       .strokeOpacity(0.2)
+       .stroke(colors.primary);
+
+    // Format date helper
     const formatDate = (dateStr) => {
       return new Date(dateStr).toLocaleDateString('en-GB', {
         day: '2-digit',
@@ -1243,100 +1307,275 @@ const classes = await AllClass.find({
       });
     };
 
-    doc.text(`Filters Applied:`, { continued: false });
-    doc.text(`Year: ${year}`, { continued: false });
-    doc.text(`Branch: ${branch}`, { continued: false });
-    doc.text(`Date Range: ${formatDate(startDate)} → ${formatDate(endDate)}`, { continued: false });
-    doc.moveDown(1);
-
-    // Calculate column widths
-    const pageWidth = doc.page.width - 60; // Account for margins
-    const rollNoWidth = 60;
-    const nameWidth = 100;
-    const avgWidth = 80;
-    const subjectWidth = (pageWidth - rollNoWidth - nameWidth - avgWidth) / subjects.length;
-
-    // Table header
-    let currentY = doc.y;
-    doc.fontSize(10).font('Helvetica-Bold');
+    // Info panel content in columns
+    doc.fontSize(11).font('Helvetica-Bold').fillColor(colors.primary);
     
-    doc.text('Roll No', 30, currentY, { width: rollNoWidth, align: 'center' });
-    doc.text('Name', 30 + rollNoWidth, currentY, { width: nameWidth, align: 'center' });
-    
-    let currentX = 30 + rollNoWidth + nameWidth;
-    subjects.forEach(subject => {
-      doc.text(subject, currentX, currentY, { width: subjectWidth, align: 'center' });
-      currentX += subjectWidth;
-    });
-    
-    doc.text('📊 Avg', currentX, currentY, { width: avgWidth, align: 'center' });
+    const infoY = currentY + 15;
+    const col1X = margin + 20;
+    const col2X = margin + 200;
+    const col3X = margin + 400;
+    const col4X = margin + 600;
 
-    // Draw header line
-    currentY += 20;
-    doc.moveTo(30, currentY).lineTo(pageWidth + 30, currentY).stroke();
-    currentY += 5;
+    // Column 1
+    doc.text('🎓 ACADEMIC YEAR', col1X, infoY);
+    doc.font('Helvetica').fillColor(colors.dark);
+    doc.text(year, col1X, infoY + 15);
 
-    // Table rows
-    doc.font('Helvetica').fontSize(9);
-    
-    reportData.forEach((student, index) => {
-      // Check if we need a new page
-      if (currentY > doc.page.height - 100) {
-        doc.addPage();
-        currentY = 50;
-      }
+    // Column 2
+    doc.font('Helvetica-Bold').fillColor(colors.primary);
+    doc.text('🏛️ BRANCH', col2X, infoY);
+    doc.font('Helvetica').fillColor(colors.dark);
+    doc.text(branch, col2X, infoY + 15);
 
-      const rowY = currentY;
+    // Column 3
+    doc.font('Helvetica-Bold').fillColor(colors.primary);
+    doc.text('📅 PERIOD FROM', col3X, infoY);
+    doc.font('Helvetica').fillColor(colors.dark);
+    doc.text(formatDate(startDate), col3X, infoY + 15);
 
-      // Roll Number
-      doc.text(student.rollNumber, 30, rowY, { width: rollNoWidth, align: 'center' });
-      
-      // Name (truncate if too long)
-      const displayName = student.name.length > 15 ? student.name.substring(0, 12) + '...' : student.name;
-      doc.text(displayName, 30 + rollNoWidth, rowY, { width: nameWidth, align: 'center' });
+    // Column 4
+    doc.font('Helvetica-Bold').fillColor(colors.primary);
+    doc.text('📅 PERIOD TO', col4X, infoY);
+    doc.font('Helvetica').fillColor(colors.dark);
+    doc.text(formatDate(endDate), col4X, infoY + 15);
 
-      // Subject percentages
-      currentX = 30 + rollNoWidth + nameWidth;
-      subjects.forEach(subject => {
-        const subjectData = student.subjects[subject];
-        const percentage = subjectData ? `${subjectData.percentage}%` : '0%';
-        doc.text(percentage, currentX, rowY, { width: subjectWidth, align: 'center' });
-        currentX += subjectWidth;
-      });
+    // Additional info row
+    doc.font('Helvetica-Bold').fillColor(colors.primary);
+    doc.text('👥 TOTAL STUDENTS', col1X, infoY + 35);
+    doc.font('Helvetica').fillColor(colors.dark);
+    doc.text(reportData.length.toString(), col1X, infoY + 50);
 
-      // Average attendance
-      doc.text(`${student.totalAttendance}%`, currentX, rowY, { width: avgWidth, align: 'center' });
+    doc.font('Helvetica-Bold').fillColor(colors.primary);
+    doc.text('📚 SUBJECTS COUNT', col2X, infoY + 35);
+    doc.font('Helvetica').fillColor(colors.dark);
+    doc.text(subjects.length.toString(), col2X, infoY + 50);
 
-      currentY += 15;
-
-      // Add alternating row background (light gray)
-      if (index % 2 === 0) {
-        doc.rect(30, rowY - 2, pageWidth, 14).fillOpacity(0.05).fill('#000000').fillOpacity(1);
-      }
-    });
-
-    // Add summary
-    currentY += 20;
-    doc.fontSize(10).font('Helvetica-Bold');
-    doc.text('Summary:', 30, currentY);
-    currentY += 15;
-    
-    doc.font('Helvetica').fontSize(9);
-    doc.text(`Total Students: ${reportData.length}`, 30, currentY);
-    currentY += 12;
-    doc.text(`Total Subjects: ${subjects.length}`, 30, currentY);
-    currentY += 12;
-    
     const overallAvg = reportData.length > 0 
       ? Math.round((reportData.reduce((sum, student) => sum + student.totalAttendance, 0) / reportData.length) * 100) / 100 
       : 0;
-    doc.text(`Overall Average Attendance: ${overallAvg}%`, 30, currentY);
+
+    doc.font('Helvetica-Bold').fillColor(colors.primary);
+    doc.text('📊 OVERALL AVERAGE', col3X, infoY + 35);
+    doc.font('Helvetica').fillColor(colors.dark);
+    doc.text(`${overallAvg}%`, col3X, infoY + 50);
+
+    doc.font('Helvetica-Bold').fillColor(colors.primary);
+    doc.text('📋 REPORT DATE', col4X, infoY + 35);
+    doc.font('Helvetica').fillColor(colors.dark);
+    doc.text(new Date().toLocaleDateString('en-GB'), col4X, infoY + 50);
+
+    currentY = 270;
+
+    // PERFORMANCE LEGEND
+    doc.fontSize(10).font('Helvetica-Bold').fillColor(colors.dark);
+    doc.text('PERFORMANCE INDICATORS:', margin, currentY);
+    
+    const legendY = currentY + 15;
+    const legendItems = [
+      { color: colors.success, text: '90-100% Excellent', symbol: '●' },
+      { color: colors.primary, text: '80-89% Good', symbol: '●' },
+      { color: colors.warning, text: '70-79% Average', symbol: '●' },
+      { color: colors.danger, text: 'Below 70% Needs Attention', symbol: '●' }
+    ];
+
+    let legendX = margin;
+    legendItems.forEach(item => {
+      doc.fillColor(item.color).text(item.symbol, legendX, legendY);
+      doc.fillColor(colors.dark).text(item.text, legendX + 10, legendY);
+      legendX += 140;
+    });
+
+    currentY = legendY + 30;
+
+    // TABLE HEADER
+    // Calculate dynamic column widths
+    const rollNoWidth = 60;
+    const nameWidth = 120;
+    const avgWidth = 80;
+    const totalTableWidth = pageWidth - 40;
+    const subjectWidth = Math.min(80, (totalTableWidth - rollNoWidth - nameWidth - avgWidth) / subjects.length);
+
+    // Header background
+    doc.rect(margin, currentY, totalTableWidth, 35)
+       .fillOpacity(0.1)
+       .fill(colors.primary)
+       .fillOpacity(1);
+
+    // Header border
+    doc.rect(margin, currentY, totalTableWidth, 35)
+       .lineWidth(2)
+       .stroke(colors.primary);
+
+    // Header text
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('white');
+
+    // Draw header background for better text visibility
+    doc.rect(margin, currentY, totalTableWidth, 35).fill(colors.primary);
+
+    const headerY = currentY + 12;
+    doc.text('ROLL NO', margin + 5, headerY, { width: rollNoWidth, align: 'center' });
+    doc.text('STUDENT NAME', margin + rollNoWidth + 5, headerY, { width: nameWidth, align: 'center' });
+    
+    let headerX = margin + rollNoWidth + nameWidth;
+    subjects.forEach((subject, index) => {
+      const shortSubject = subject.length > 8 ? subject.substring(0, 6) + '..' : subject;
+      doc.text(shortSubject, headerX + 5, headerY, { width: subjectWidth, align: 'center' });
+      headerX += subjectWidth;
+    });
+    
+    doc.text('AVERAGE', headerX + 5, headerY, { width: avgWidth, align: 'center' });
+
+    currentY += 35;
+
+    // TABLE ROWS
+    doc.fillColor(colors.dark);
+    
+    reportData.forEach((student, index) => {
+      // Check for page break
+      if (currentY > doc.page.height - 120) {
+        doc.addPage();
+        currentY = 50;
+        
+        // Redraw header on new page
+        doc.rect(margin, currentY, totalTableWidth, 35).fill(colors.primary);
+        doc.fontSize(10).font('Helvetica-Bold').fillColor('white');
+        const newHeaderY = currentY + 12;
+        
+        doc.text('ROLL NO', margin + 5, newHeaderY, { width: rollNoWidth, align: 'center' });
+        doc.text('STUDENT NAME', margin + rollNoWidth + 5, newHeaderY, { width: nameWidth, align: 'center' });
+        
+        let newHeaderX = margin + rollNoWidth + nameWidth;
+        subjects.forEach(subject => {
+          const shortSubject = subject.length > 8 ? subject.substring(0, 6) + '..' : subject;
+          doc.text(shortSubject, newHeaderX + 5, newHeaderY, { width: subjectWidth, align: 'center' });
+          newHeaderX += subjectWidth;
+        });
+        
+        doc.text('AVERAGE', newHeaderX + 5, newHeaderY, { width: avgWidth, align: 'center' });
+        currentY += 40;
+        doc.fillColor(colors.dark);
+      }
+
+      const rowY = currentY;
+      const rowHeight = 25;
+
+      // Alternating row background
+      if (index % 2 === 0) {
+        doc.rect(margin, rowY, totalTableWidth, rowHeight)
+           .fillOpacity(0.03)
+           .fill(colors.primary)
+           .fillOpacity(1);
+      }
+
+      // Row border
+      doc.rect(margin, rowY, totalTableWidth, rowHeight)
+         .lineWidth(0.5)
+         .strokeOpacity(0.2)
+         .stroke(colors.secondary);
+
+      // Cell content
+      doc.fontSize(9).font('Helvetica');
+
+      // Roll Number
+      doc.fillColor(colors.dark);
+      doc.text(student.rollNumber, margin + 5, rowY + 8, { width: rollNoWidth, align: 'center' });
+      
+      // Name
+      const displayName = student.name.length > 18 ? student.name.substring(0, 15) + '...' : student.name;
+      doc.text(displayName, margin + rollNoWidth + 5, rowY + 8, { width: nameWidth, align: 'left' });
+
+      // Subject percentages with color coding
+      let cellX = margin + rollNoWidth + nameWidth;
+      subjects.forEach(subject => {
+        const subjectData = student.subjects[subject];
+        const percentage = subjectData ? subjectData.percentage : 0;
+        
+        // Color coding based on percentage
+        let textColor = colors.dark;
+        if (percentage >= 90) textColor = colors.success;
+        else if (percentage >= 80) textColor = colors.primary;
+        else if (percentage >= 70) textColor = colors.warning;
+        else if (percentage > 0) textColor = colors.danger;
+
+        doc.fillColor(textColor);
+        doc.text(`${percentage}%`, cellX + 5, rowY + 8, { width: subjectWidth, align: 'center' });
+        cellX += subjectWidth;
+      });
+
+      // Average with enhanced styling
+      const avgPercentage = student.totalAttendance;
+      let avgColor = colors.dark;
+      let avgSymbol = '';
+      
+      if (avgPercentage >= 90) {
+        avgColor = colors.success;
+        avgSymbol = '★';
+      } else if (avgPercentage >= 80) {
+        avgColor = colors.primary;
+        avgSymbol = '▲';
+      } else if (avgPercentage >= 70) {
+        avgColor = colors.warning;
+        avgSymbol = '●';
+      } else if (avgPercentage > 0) {
+        avgColor = colors.danger;
+        avgSymbol = '▼';
+      }
+
+      doc.fillColor(avgColor).font('Helvetica-Bold');
+      doc.text(`${avgSymbol} ${avgPercentage}%`, cellX + 5, rowY + 8, { width: avgWidth, align: 'center' });
+
+      currentY += rowHeight;
+    });
+
+    // FOOTER SECTION
+    currentY += 20;
+    
+    // Statistics box
+    doc.rect(margin, currentY, totalTableWidth, 60)
+       .fillOpacity(0.05)
+       .fill(colors.primary)
+       .fillOpacity(1);
+
+    doc.rect(margin, currentY, totalTableWidth, 60)
+       .lineWidth(1)
+       .strokeOpacity(0.3)
+       .stroke(colors.primary);
+
+    doc.fontSize(12).font('Helvetica-Bold').fillColor(colors.primary);
+    doc.text('📈 ATTENDANCE ANALYTICS SUMMARY', margin + 20, currentY + 10);
+
+    doc.fontSize(10).font('Helvetica').fillColor(colors.dark);
+    
+    // Calculate statistics
+    const excellentStudents = reportData.filter(s => s.totalAttendance >= 90).length;
+    const goodStudents = reportData.filter(s => s.totalAttendance >= 80 && s.totalAttendance < 90).length;
+    const averageStudents = reportData.filter(s => s.totalAttendance >= 70 && s.totalAttendance < 80).length;
+    const needsAttention = reportData.filter(s => s.totalAttendance < 70).length;
+
+    const statsY = currentY + 30;
+    doc.text(`✨ Excellent Performance (90-100%): ${excellentStudents} students`, margin + 20, statsY);
+    doc.text(`💎 Good Performance (80-89%): ${goodStudents} students`, margin + 220, statsY);
+    doc.text(`⚡ Average Performance (70-79%): ${averageStudents} students`, margin + 420, statsY);
+    doc.text(`🔔 Needs Attention (<70%): ${needsAttention} students`, margin + 620, statsY);
+
+    // Footer with generation info
+    currentY += 80;
+    doc.fontSize(8).font('Helvetica').fillColor(colors.secondary);
+    doc.text(`Generated on ${new Date().toLocaleString()} | System: Academic Management System v2.0`, 
+             margin, currentY, { align: 'center', width: totalTableWidth });
+
+    // Decorative footer line
+    doc.moveTo(margin, currentY + 15)
+       .lineTo(margin + totalTableWidth, currentY + 15)
+       .lineWidth(1)
+       .strokeOpacity(0.3)
+       .stroke(colors.primary);
 
     // Finalize the PDF
     doc.end();
 
   } catch (error) {
-    console.error('Error generating student-wise report:', error);
+    console.error('Error generating beautiful student-wise report:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to generate report',
