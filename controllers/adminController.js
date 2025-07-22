@@ -1337,4 +1337,4 @@ exports.generateSubjectWiseReport = async (req, res) => {
       error: error.message
     });
   }
-});
+};
