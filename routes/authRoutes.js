@@ -101,23 +101,32 @@ router.post('/teacher/login', async (req, res) => {
 router.post('/student/login', async (req, res) => {
   const { rollNumber, email, password } = req.body;
   try {
-    const student = await Student.findOne({ rollNumber, email,password });
-    if (student && (await (password, student.password))) {
-      res.json({
-        _id: student.id,
-        name: student.name,
-        email: student.email,
-        rollNumber: student.rollNumber,
-        department: student.department,
-        year: student.year,
-        token: generateToken(student.id),
-      });
-    } else {
-      res.status(401).json({ message: 'Invalid credentials' });
-    }
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+    const deviceIdHeader = req.headers['x-device-id'];
+if (!deviceIdHeader) {
+  return res.status(400).json({ message: 'Device ID is required' });
+}
+
+const student = await Student.findOne({ rollNumber, email });
+if (student && student.password === password) {
+  if (!student.deviceId) {
+    student.deviceId = deviceIdHeader;
+    await student.save();
+  } else if (student.deviceId !== deviceIdHeader) {
+    return res.status(403).json({ message: 'This account is locked to another device' });
   }
-});
+
+  res.json({
+    _id: student.id,
+    name: student.name,
+    email: student.email,
+    rollNumber: student.rollNumber,
+    department: student.department,
+    year: student.year,
+    token: generateToken(student.id),
+  });
+} else {
+  res.status(401).json({ message: 'Invalid credentials' });
+}
+
 
 module.exports = router;
