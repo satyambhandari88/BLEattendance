@@ -1382,7 +1382,7 @@ exports.generateSubjectWiseReport = async (req, res) => {
 
     // Simple footer
     doc.fillColor(colors.secondary).fontSize(8)
-       .text(`Generated: ${new Date().toLocaleString()}`, 20, doc.page.height - 30);
+       .text(`Powered by Reporev Technologies Pvt. Ltd.`, 20, doc.page.height - 30);
 
     console.log(`PDF generated for ${reportData.length} students`);
     doc.end();
