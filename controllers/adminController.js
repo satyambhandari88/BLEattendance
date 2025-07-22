@@ -1087,14 +1087,19 @@ exports.generateSubjectWiseReport = async (req, res) => {
 
     // Step 1: Find all classes for the given year, branch, and date range
     const classes = await Class.find({
-      year: year.toString(),
-      branch: branch,
-      date: {
-        $gte: start.toISOString().split('T')[0],
-        $lte: end.toISOString().split('T')[0]
-      },
-      isActive: true
-    }).select('_id subject className');
+     const startStr = start.toISOString().split('T')[0];
+const endStr = end.toISOString().split('T')[0];
+
+const classes = await Class.find({
+  year: year.toString(),
+  branch: branch,
+  date: {
+    $gte: startStr,
+    $lte: endStr
+  },
+  isActive: true
+});
+
 
     if (classes.length === 0) {
       return res.status(404).json({
