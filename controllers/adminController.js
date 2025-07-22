@@ -769,7 +769,7 @@ exports.generateAttendanceRegister = async (req, res) => {
     const doc = new PDFDocument({ 
       margin: 25, // Reduced margin for more space
       size: 'A4', 
-    
+     layout: 'landscape',
       compress: true // Compress PDF to reduce size
     });
     
@@ -1236,7 +1236,7 @@ exports.generateSubjectWiseReport = async (req, res) => {
     const doc = new PDFDocument({ 
       margin: 20, // Reduced margins
       size: 'A4', 
-      
+      layout: 'landscape',
       compress: true,
       bufferPages: true // Enable page buffering for better memory management
     });
