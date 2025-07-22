@@ -1065,12 +1065,6 @@ exports.generateAttendanceRegister = async (req, res) => {
 
 
 // Add to adminController.js
-const Class = require('../models/Class');
-const Student = require('../models/Student');
-const Attendance = require('../models/Attendance');
-const PDFDocument = require('pdfkit');
-const fs = require('fs');
-const path = require('path');
 
 exports.generateSubjectWiseReport = async (req, res) => {
   try {
