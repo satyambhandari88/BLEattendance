@@ -8,6 +8,7 @@ const Subject = require('../models/Subject');
 const AcademicStructure = require('../models/AcademicStructure');
 const PDFDocument = require('pdfkit');
 const Attendance = require('../models/Attendance');
+const AllClass = required('../models/CreateClass');
 
 const multer = require('multer');
 const csvParser = require('csv-parser');
@@ -1086,11 +1087,10 @@ exports.generateSubjectWiseReport = async (req, res) => {
     end.setHours(23, 59, 59, 999); // Set end date to end of day
 
     // Step 1: Find all classes for the given year, branch, and date range
-    const classes = await Class.find({
-     const startStr = start.toISOString().split('T')[0];
+   const startStr = start.toISOString().split('T')[0];
 const endStr = end.toISOString().split('T')[0];
 
-const classes = await Class.find({
+const classes = await AllClass.find({
   year: year.toString(),
   branch: branch,
   date: {
@@ -1099,6 +1099,7 @@ const classes = await Class.find({
   },
   isActive: true
 });
+
 
 
     if (classes.length === 0) {
