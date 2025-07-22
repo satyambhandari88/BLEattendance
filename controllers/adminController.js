@@ -8,7 +8,7 @@ const Subject = require('../models/Subject');
 const AcademicStructure = require('../models/AcademicStructure');
 const PDFDocument = require('pdfkit');
 const Attendance = require('../models/Attendance');
-const AllClass = required('../models/CreateClass');
+const AllClass = require('../models/CreateClass');
 
 const multer = require('multer');
 const csvParser = require('csv-parser');
