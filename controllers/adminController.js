@@ -1065,10 +1065,18 @@ exports.generateAttendanceRegister = async (req, res) => {
 
 
 // Add to adminController.js
+const Class = require('../models/Class');
+const Student = require('../models/Student');
+const Attendance = require('../models/Attendance');
+const PDFDocument = require('pdfkit');
+const fs = require('fs');
+const path = require('path');
+
 exports.generateSubjectWiseReport = async (req, res) => {
   try {
-    // Input validation
+    // Enhanced input validation
     const { year, branch, startDate, endDate } = req.body;
+    
     if (!year || !branch || !startDate || !endDate) {
       return res.status(400).json({
         success: false,
@@ -1076,33 +1084,51 @@ exports.generateSubjectWiseReport = async (req, res) => {
       });
     }
 
-    // Date processing
+    // Convert year to string for consistency
+    const yearStr = year.toString();
+    
+    // Create case-insensitive regex for branch
+    const branchRegex = new RegExp(`^${branch}$`, 'i');
+    
+    // Validate and parse dates
     const start = new Date(startDate);
     const end = new Date(endDate);
+    
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date format. Please use YYYY-MM-DD'
+      });
+    }
+    
     end.setHours(23, 59, 59, 999);
 
-    // Get unique subjects from classes
+    // Get classes with proper filtering
     const classes = await Class.find({
-      year: year.toString(),
-      branch: { $regex: new RegExp(branch, 'i') },
+      year: yearStr,
+      branch: branchRegex,
       date: { $gte: start, $lte: end }
     }).lean();
 
     if (classes.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'No classes found for the selected criteria'
+        message: `No classes found for:
+        - Year: ${yearStr}
+        - Branch: ${branch}
+        - Date Range: ${startDate} to ${endDate}`
       });
     }
 
+    // Get unique subjects
     const subjects = [...new Set(classes.map(c => c.subject))];
     const classIds = classes.map(c => c._id);
 
     // Get students and attendance in parallel
     const [students, attendanceRecords] = await Promise.all([
       Student.find({
-        year: year.toString(),
-        department: { $regex: new RegExp(branch, 'i') }
+        year: yearStr,
+        department: branchRegex
       }).sort('rollNumber').lean(),
       Attendance.find({
         classId: { $in: classIds }
@@ -1172,7 +1198,7 @@ exports.generateSubjectWiseReport = async (req, res) => {
 
     // Generate PDF
     const doc = new PDFDocument({ margin: 25, size: 'A4', layout: 'landscape' });
-    const fileName = `attendance_report_${year}_${branch}_${Date.now()}.pdf`;
+    const fileName = `attendance_report_${yearStr}_${branch.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
     const tempDir = path.join(__dirname, '../../temp');
     
     if (!fs.existsSync(tempDir)) {
@@ -1189,7 +1215,7 @@ exports.generateSubjectWiseReport = async (req, res) => {
        .fontSize(16).font('Helvetica-Bold')
        .text('ATTENDANCE REPORT', { align: 'center', y: 30 })
        .fontSize(12)
-       .text(`${year} Year | ${branch}`, { align: 'center', y: 50 })
+       .text(`${yearStr} Year | ${branch}`, { align: 'center', y: 50 })
        .fontSize(10)
        .text(`${formatDate(start)} to ${formatDate(end)}`, { align: 'center', y: 65 });
 
