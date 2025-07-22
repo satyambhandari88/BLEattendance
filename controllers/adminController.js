@@ -1068,293 +1068,273 @@ exports.generateAttendanceRegister = async (req, res) => {
 
 exports.generateSubjectWiseReport = async (req, res) => {
   try {
-    // Enhanced input validation
     const { year, branch, startDate, endDate } = req.body;
-    
+
+    console.log('Generating student-wise report with:', { year, branch, startDate, endDate });
+
+    // Validate required fields
     if (!year || !branch || !startDate || !endDate) {
       return res.status(400).json({
         success: false,
-        message: 'All fields (year, branch, startDate, endDate) are required'
+        message: 'Year, branch, start date, and end date are required'
       });
     }
 
-    // Convert year to string for consistency
-    const yearStr = year.toString();
-    
-    // Create case-insensitive regex for branch
-    const branchRegex = new RegExp(`^${branch}$`, 'i');
-    
-    // Validate and parse dates
+    // Parse dates
     const start = new Date(startDate);
     const end = new Date(endDate);
-    
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid date format. Please use YYYY-MM-DD'
-      });
-    }
-    
-    end.setHours(23, 59, 59, 999);
+    end.setHours(23, 59, 59, 999); // Set end date to end of day
 
-    // Get classes with proper filtering
+    // Step 1: Find all classes for the given year, branch, and date range
     const classes = await Class.find({
-      year: yearStr,
-      branch: branchRegex,
-      date: { $gte: start, $lte: end }
-    }).lean();
+      year: year.toString(),
+      branch: branch,
+      date: {
+        $gte: start.toISOString().split('T')[0],
+        $lte: end.toISOString().split('T')[0]
+      },
+      isActive: true
+    }).select('_id subject className');
 
     if (classes.length === 0) {
       return res.status(404).json({
         success: false,
-        message: `No classes found for:
-        - Year: ${yearStr}
-        - Branch: ${branch}
-        - Date Range: ${startDate} to ${endDate}`
+        message: `No classes found for Year ${year}, Branch ${branch} between ${startDate} and ${endDate}`
       });
     }
 
-    // Get unique subjects
-    const subjects = [...new Set(classes.map(c => c.subject))];
-    const classIds = classes.map(c => c._id);
+    console.log(`Found ${classes.length} classes`);
 
-    // Get students and attendance in parallel
-    const [students, attendanceRecords] = await Promise.all([
-      Student.find({
-        year: yearStr,
-        department: branchRegex
-      }).sort('rollNumber').lean(),
-      Attendance.find({
-        classId: { $in: classIds }
-      }).lean()
-    ]);
+    // Step 2: Get all unique subjects
+    const subjects = [...new Set(classes.map(cls => cls.subject))].sort();
+    console.log('Subjects found:', subjects);
 
-    if (students.length === 0) {
+    // Step 3: Get all class IDs
+    const classIds = classes.map(cls => cls._id);
+
+    // Step 4: Get all attendance records for these classes
+    const attendanceRecords = await Attendance.find({
+      classId: { $in: classIds },
+      time: {
+        $gte: start,
+        $lte: end
+      }
+    }).select('rollNumber subject status classId');
+
+    if (attendanceRecords.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'No students found for the selected criteria'
+        message: `No attendance records found for the specified criteria`
       });
     }
 
-    // Create attendance map for faster lookup
-    const attendanceMap = new Map();
-    attendanceRecords.forEach(record => {
-      const key = `${record.rollNumber}_${record.classId}`;
-      attendanceMap.set(key, record.status);
-    });
+    console.log(`Found ${attendanceRecords.length} attendance records`);
 
-    // Process report data
-    const reportData = students.map(student => {
-      const studentReport = {
-        rollNumber: student.rollNumber,
-        name: student.name,
+    // Step 5: Get all unique roll numbers
+    const rollNumbers = [...new Set(attendanceRecords.map(record => record.rollNumber))].sort();
+
+    // Step 6: Try to get student names from Student model (optional)
+    let studentNames = {};
+    try {
+      const students = await Student.find({
+        rollNumber: { $in: rollNumbers },
+        year: year.toString(),
+        branch: branch
+      }).select('rollNumber name');
+      
+      studentNames = students.reduce((acc, student) => {
+        acc[student.rollNumber] = student.name;
+        return acc;
+      }, {});
+    } catch (error) {
+      console.log('Student names not available, using roll numbers only');
+    }
+
+    // Step 7: Calculate attendance percentages
+    const reportData = [];
+
+    for (const rollNumber of rollNumbers) {
+      const studentRecord = {
+        rollNumber,
+        name: studentNames[rollNumber] || `Student ${rollNumber}`,
         subjects: {},
-        totalPresent: 0,
-        totalClasses: 0
+        totalAttendance: 0
       };
 
-      // Initialize subject counters
-      subjects.forEach(subject => {
-        studentReport.subjects[subject] = { present: 0, total: 0 };
-      });
+      let totalSubjectPercentages = 0;
+      let subjectCount = 0;
 
-      // Process each class
-      classes.forEach(classInfo => {
-        const key = `${student.rollNumber}_${classInfo._id}`;
-        const status = attendanceMap.get(key);
-        
-        if (status) {
-          studentReport.subjects[classInfo.subject].total++;
-          studentReport.totalClasses++;
+      for (const subject of subjects) {
+        // Get all attendance records for this student and subject
+        const studentSubjectRecords = attendanceRecords.filter(
+          record => record.rollNumber === rollNumber && record.subject === subject
+        );
+
+        if (studentSubjectRecords.length > 0) {
+          const presentCount = studentSubjectRecords.filter(
+            record => record.status === 'Present'
+          ).length;
           
-          if (status === 'Present') {
-            studentReport.subjects[classInfo.subject].present++;
-            studentReport.totalPresent++;
-          }
+          const totalClasses = studentSubjectRecords.length;
+          const percentage = Math.round((presentCount / totalClasses) * 100 * 100) / 100; // Round to 2 decimal places
+          
+          studentRecord.subjects[subject] = {
+            percentage,
+            present: presentCount,
+            total: totalClasses
+          };
+
+          totalSubjectPercentages += percentage;
+          subjectCount++;
+        } else {
+          studentRecord.subjects[subject] = {
+            percentage: 0,
+            present: 0,
+            total: 0
+          };
         }
-      });
-
-      // Calculate percentages
-      subjects.forEach(subject => {
-        const sub = studentReport.subjects[subject];
-        studentReport[subject] = sub.total > 0 
-          ? `${Math.round((sub.present / sub.total) * 100)}%` 
-          : 'N/A';
-      });
-
-      // Calculate average
-      studentReport.avgAttendance = studentReport.totalClasses > 0
-        ? `${Math.round((studentReport.totalPresent / studentReport.totalClasses) * 100)}%`
-        : '0%';
-
-      return studentReport;
-    });
-
-    // Generate PDF
-    const doc = new PDFDocument({ margin: 25, size: 'A4', layout: 'landscape' });
-    const fileName = `attendance_report_${yearStr}_${branch.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
-    const tempDir = path.join(__dirname, '../../temp');
-    
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-
-    const filePath = path.join(tempDir, fileName);
-    const stream = fs.createWriteStream(filePath);
-    doc.pipe(stream);
-
-    // PDF Header
-    doc.fillColor('#2563eb').rect(0, 0, doc.page.width, 80).fill();
-    doc.fillColor('#ffffff')
-       .fontSize(16).font('Helvetica-Bold')
-       .text('ATTENDANCE REPORT', { align: 'center', y: 30 })
-       .fontSize(12)
-       .text(`${yearStr} Year | ${branch}`, { align: 'center', y: 50 })
-       .fontSize(10)
-       .text(`${formatDate(start)} to ${formatDate(end)}`, { align: 'center', y: 65 });
-
-    // Table Setup
-    const startY = 100;
-    const columnWidths = [60, 120, ...Array(subjects.length).fill(60), 80];
-    const headers = ['Roll No', 'Name', ...subjects, 'Average'];
-
-    // Table Header
-    doc.fillColor('#2563eb').rect(25, startY, doc.page.width - 50, 20).fill();
-    doc.fillColor('#ffffff').fontSize(10).font('Helvetica-Bold');
-    
-    let x = 25;
-    headers.forEach((header, i) => {
-      doc.text(header, x + 5, startY + 5, { 
-        width: columnWidths[i] - 10, 
-        align: 'center' 
-      });
-      x += columnWidths[i];
-    });
-
-    // Student Rows
-    doc.fontSize(9).font('Helvetica');
-    let y = startY + 20;
-    
-    reportData.forEach((student, index) => {
-      // Alternate row colors
-      if (index % 2 === 0) {
-        doc.fillColor('#f8fafc').rect(25, y, doc.page.width - 50, 20).fill();
       }
 
-      x = 25;
-      doc.fillColor('#1e293b')
-         .text(student.rollNumber, x + 5, y + 5, { 
-           width: columnWidths[0] - 10, 
-           align: 'center' 
-         });
-      x += columnWidths[0];
+      // Calculate average attendance
+      studentRecord.totalAttendance = subjectCount > 0 
+        ? Math.round((totalSubjectPercentages / subjectCount) * 100) / 100 
+        : 0;
 
-      doc.text(student.name, x + 5, y + 5, { 
-        width: columnWidths[1] - 10, 
-        align: 'left' 
+      reportData.push(studentRecord);
+    }
+
+    // Sort by roll number
+    reportData.sort((a, b) => a.rollNumber.localeCompare(b.rollNumber));
+
+    console.log(`Generated report for ${reportData.length} students`);
+
+    // Step 8: Generate PDF
+    const doc = new PDFDocument({ 
+      size: 'A4', 
+      layout: 'landscape',
+      margin: 30 
+    });
+
+    // Set response headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=Student_Attendance_Report_${year}_${branch.replace(/\s+/g, '_')}.pdf`);
+
+    // Pipe the PDF to response
+    doc.pipe(res);
+
+    // Add title
+    doc.fontSize(16).font('Helvetica-Bold');
+    doc.text('📊 Student-wise Attendance Report', { align: 'center' });
+    doc.moveDown(0.5);
+
+    // Add filters info
+    doc.fontSize(12).font('Helvetica');
+    const formatDate = (dateStr) => {
+      return new Date(dateStr).toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
       });
-      x += columnWidths[1];
+    };
+
+    doc.text(`Filters Applied:`, { continued: false });
+    doc.text(`Year: ${year}`, { continued: false });
+    doc.text(`Branch: ${branch}`, { continued: false });
+    doc.text(`Date Range: ${formatDate(startDate)} → ${formatDate(endDate)}`, { continued: false });
+    doc.moveDown(1);
+
+    // Calculate column widths
+    const pageWidth = doc.page.width - 60; // Account for margins
+    const rollNoWidth = 60;
+    const nameWidth = 100;
+    const avgWidth = 80;
+    const subjectWidth = (pageWidth - rollNoWidth - nameWidth - avgWidth) / subjects.length;
+
+    // Table header
+    let currentY = doc.y;
+    doc.fontSize(10).font('Helvetica-Bold');
+    
+    doc.text('Roll No', 30, currentY, { width: rollNoWidth, align: 'center' });
+    doc.text('Name', 30 + rollNoWidth, currentY, { width: nameWidth, align: 'center' });
+    
+    let currentX = 30 + rollNoWidth + nameWidth;
+    subjects.forEach(subject => {
+      doc.text(subject, currentX, currentY, { width: subjectWidth, align: 'center' });
+      currentX += subjectWidth;
+    });
+    
+    doc.text('📊 Avg', currentX, currentY, { width: avgWidth, align: 'center' });
+
+    // Draw header line
+    currentY += 20;
+    doc.moveTo(30, currentY).lineTo(pageWidth + 30, currentY).stroke();
+    currentY += 5;
+
+    // Table rows
+    doc.font('Helvetica').fontSize(9);
+    
+    reportData.forEach((student, index) => {
+      // Check if we need a new page
+      if (currentY > doc.page.height - 100) {
+        doc.addPage();
+        currentY = 50;
+      }
+
+      const rowY = currentY;
+
+      // Roll Number
+      doc.text(student.rollNumber, 30, rowY, { width: rollNoWidth, align: 'center' });
+      
+      // Name (truncate if too long)
+      const displayName = student.name.length > 15 ? student.name.substring(0, 12) + '...' : student.name;
+      doc.text(displayName, 30 + rollNoWidth, rowY, { width: nameWidth, align: 'center' });
 
       // Subject percentages
+      currentX = 30 + rollNoWidth + nameWidth;
       subjects.forEach(subject => {
-        const percentage = student[subject];
-        let color = '#1e293b';
-        
-        if (percentage !== 'N/A') {
-          const percentValue = parseInt(percentage);
-          color = percentValue >= 75 ? '#16a34a' : 
-                 percentValue >= 60 ? '#d97706' : '#dc2626';
-        }
-        
-        doc.fillColor(color).text(percentage, x + 5, y + 5, { 
-          width: columnWidths[2] - 10, 
-          align: 'center' 
-        });
-        x += columnWidths[2];
+        const subjectData = student.subjects[subject];
+        const percentage = subjectData ? `${subjectData.percentage}%` : '0%';
+        doc.text(percentage, currentX, rowY, { width: subjectWidth, align: 'center' });
+        currentX += subjectWidth;
       });
 
       // Average attendance
-      doc.fillColor('#2563eb').font('Helvetica-Bold')
-         .text(student.avgAttendance, x + 5, y + 5, { 
-           width: columnWidths[columnWidths.length - 1] - 10, 
-           align: 'center' 
-         });
+      doc.text(`${student.totalAttendance}%`, currentX, rowY, { width: avgWidth, align: 'center' });
 
-      y += 20;
-      
-      // Add new page if needed
-      if (y > doc.page.height - 50 && index < reportData.length - 1) {
-        doc.addPage({ margin: 25, size: 'A4', layout: 'landscape' });
-        
-        // New page header
-        doc.fillColor('#2563eb').rect(0, 0, doc.page.width, 60).fill();
-        doc.fillColor('#ffffff')
-           .fontSize(12).font('Helvetica-Bold')
-           .text('ATTENDANCE REPORT (Continued)', { align: 'center', y: 15 })
-           .fontSize(9)
-           .text(`Page ${doc.page.number}`, { align: 'center', y: 35 });
-        
-        // Table header again
-        y = 60;
-        doc.fillColor('#2563eb').rect(25, y, doc.page.width - 50, 20).fill();
-        doc.fillColor('#ffffff').fontSize(10).font('Helvetica-Bold');
-        
-        x = 25;
-        headers.forEach((header, i) => {
-          doc.text(header, x + 5, y + 5, { 
-            width: columnWidths[i] - 10, 
-            align: 'center' 
-          });
-          x += columnWidths[i];
-        });
-        
-        y += 20;
-        doc.fontSize(9).font('Helvetica');
+      currentY += 15;
+
+      // Add alternating row background (light gray)
+      if (index % 2 === 0) {
+        doc.rect(30, rowY - 2, pageWidth, 14).fillOpacity(0.05).fill('#000000').fillOpacity(1);
       }
     });
 
+    // Add summary
+    currentY += 20;
+    doc.fontSize(10).font('Helvetica-Bold');
+    doc.text('Summary:', 30, currentY);
+    currentY += 15;
+    
+    doc.font('Helvetica').fontSize(9);
+    doc.text(`Total Students: ${reportData.length}`, 30, currentY);
+    currentY += 12;
+    doc.text(`Total Subjects: ${subjects.length}`, 30, currentY);
+    currentY += 12;
+    
+    const overallAvg = reportData.length > 0 
+      ? Math.round((reportData.reduce((sum, student) => sum + student.totalAttendance, 0) / reportData.length) * 100) / 100 
+      : 0;
+    doc.text(`Overall Average Attendance: ${overallAvg}%`, 30, currentY);
+
+    // Finalize the PDF
     doc.end();
 
-    // Wait for PDF generation
-    await new Promise((resolve, reject) => {
-      stream.on('finish', resolve);
-      stream.on('error', reject);
-    });
-
-    // Send file
-    res.download(filePath, fileName, (err) => {
-      // Clean up
-      try {
-        fs.unlinkSync(filePath);
-      } catch (cleanupErr) {
-        console.error('Error cleaning up file:', cleanupErr);
-      }
-      
-      if (err && !res.headersSent) {
-        res.status(500).json({ 
-          success: false, 
-          message: 'Error sending file' 
-        });
-      }
-    });
-
   } catch (error) {
-    console.error('Report generation error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Internal server error',
-        error: error.message 
-      });
-    }
+    console.error('Error generating student-wise report:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate report',
+      error: error.message
+    });
   }
-};
-
-// Helper function to format dates
-function formatDate(date) {
-  return date.toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric'
-  }).replace(/ /g, '-');
-}
+});
