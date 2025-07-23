@@ -107,23 +107,26 @@ router.post('/student/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // 👉 If using bcrypt, replace this line:
+    // 👉 If using bcrypt, use this line instead:
+    // const isPasswordCorrect = await bcrypt.compare(password, student.password);
     const isPasswordCorrect = student.password === password;
+
     if (!isPasswordCorrect) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // If deviceId not set, store the first-time login deviceId
+    // ✅ First-time login — store deviceId
     if (!student.deviceId) {
       student.deviceId = deviceId;
       await student.save();
     }
 
-    // Prevent login if device doesn't match
+    // ✅ Deny login if device does not match
     if (student.deviceId !== deviceId) {
       return res.status(403).json({ message: 'This account is already linked to another device.' });
     }
 
+    // ✅ Return deviceId as well (for client-side logic)
     res.json({
       _id: student.id,
       name: student.name,
@@ -132,6 +135,7 @@ router.post('/student/login', async (req, res) => {
       department: student.department,
       year: student.year,
       token: generateToken(student.id),
+      deviceId: student.deviceId, // ✅ important
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
