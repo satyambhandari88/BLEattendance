@@ -24,6 +24,10 @@ const StudentSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  deviceId: {
+  type: String,
+  default: null,
+},
   year: {
     type: Number,
     required: true,
