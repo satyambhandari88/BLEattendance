@@ -55,6 +55,48 @@ exports.fetchStudents=async (req, res) => {
 
 
 
+exports.updateStudent = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rollNumber, name, email, password, department, year, faceData } = req.body;
+
+    const student = await Student.findById(id);
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+
+    student.rollNumber = rollNumber || student.rollNumber;
+    student.name = name || student.name;
+    student.email = email || student.email;
+    student.password = password || student.password; // Optional: Hash if using bcrypt
+    student.department = department || student.department;
+    student.year = year || student.year;
+    student.faceData = faceData || student.faceData;
+
+    await student.save();
+    res.json({ message: 'Student updated successfully' });
+  } catch (error) {
+    console.error('Update Error:', error);
+    res.status(500).json({ message: 'Server error while updating student' });
+  }
+};
+
+
+exports.deleteStudent = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const student = await Student.findById(id);
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+
+    await student.deleteOne();
+    res.json({ message: 'Student deleted successfully' });
+  } catch (error) {
+    console.error('Delete Error:', error);
+    res.status(500).json({ message: 'Server error while deleting student' });
+  }
+};
+
+
+
 
 
 
