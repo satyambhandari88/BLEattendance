@@ -99,22 +99,40 @@ router.post('/teacher/login', async (req, res) => {
 
 // Student Login
 router.post('/student/login', async (req, res) => {
-  const { rollNumber, email, password } = req.body;
+  const { rollNumber, email, password, deviceId } = req.body;
+
   try {
-    const student = await Student.findOne({ rollNumber, email,password });
-    if (student && (await (password, student.password))) {
-      res.json({
-        _id: student.id,
-        name: student.name,
-        email: student.email,
-        rollNumber: student.rollNumber,
-        department: student.department,
-        year: student.year,
-        token: generateToken(student.id),
-      });
-    } else {
-      res.status(401).json({ message: 'Invalid credentials' });
+    const student = await Student.findOne({ rollNumber, email });
+    if (!student) {
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
+
+    // 👉 If using bcrypt, replace this line:
+    const isPasswordCorrect = student.password === password;
+    if (!isPasswordCorrect) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    // If deviceId not set, store the first-time login deviceId
+    if (!student.deviceId) {
+      student.deviceId = deviceId;
+      await student.save();
+    }
+
+    // Prevent login if device doesn't match
+    if (student.deviceId !== deviceId) {
+      return res.status(403).json({ message: 'This account is already linked to another device.' });
+    }
+
+    res.json({
+      _id: student.id,
+      name: student.name,
+      email: student.email,
+      rollNumber: student.rollNumber,
+      department: student.department,
+      year: student.year,
+      token: generateToken(student.id),
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
