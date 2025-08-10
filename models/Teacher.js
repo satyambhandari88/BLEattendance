@@ -12,11 +12,7 @@ const TeacherSchema = new mongoose.Schema({
     unique: true,
   },
 
-  id: {
-    type: String,
-    required: true,
-    unique: true,
-  },
+  
   
   password: {
     type: String,
