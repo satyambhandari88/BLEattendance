@@ -218,7 +218,7 @@ exports.uploadCSV = async (req, res) => {
 // Add Teacher
 exports.addTeacher = async (req, res) => {
   try {
-    const { id, name, email, password, department, subjects } = req.body;
+    const { name, email, password, department, subjects } = req.body;
 
     // Validate department exists
     const departmentExists = await Branch.findById(department);
@@ -235,12 +235,11 @@ exports.addTeacher = async (req, res) => {
     }
 
     const newTeacher = new Teacher({ 
-      id, 
       name, 
       email, 
       password, 
       department,
-      subjects: subjects || [] // Handle case where subjects might be undefined
+      subjects: subjects || []
     });
 
     await newTeacher.save();
@@ -257,7 +256,7 @@ exports.addTeacher = async (req, res) => {
   } catch (error) {
     if (error.code === 11000) {
       return res.status(400).json({ 
-        message: 'Teacher ID or email already exists',
+        message: 'Email already exists',
         error: error.message 
       });
     }
