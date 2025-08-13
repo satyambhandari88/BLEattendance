@@ -254,19 +254,20 @@ exports.addTeacher = async (req, res) => {
       message: 'Teacher added successfully',
       teacher: populatedTeacher
     });
-  } catch (error) {
-    if (error.code === 11000) {
-      return res.status(400).json({ 
-        message: 'Teacher email already exists',
-        error: error.message 
-      });
-    }
-    res.status(500).json({ 
-      message: 'Error adding teacher', 
+ } catch (error) {
+  if (error.code === 11000) {
+    const duplicateField = Object.keys(error.keyValue)[0]; // gets the field name
+    return res.status(400).json({ 
+      message: `Teacher ${duplicateField} already exists`,
       error: error.message 
     });
   }
-};
+  res.status(500).json({ 
+    message: 'Error adding teacher', 
+    error: error.message 
+  });
+}
+
 
 
 
