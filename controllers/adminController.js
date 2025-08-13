@@ -216,6 +216,7 @@ exports.uploadCSV = async (req, res) => {
 
 
 // Add Teacher
+// controllers/teacherController.js
 exports.addTeacher = async (req, res) => {
   try {
     const { name, email, password, department, subjects } = req.body;
@@ -256,7 +257,7 @@ exports.addTeacher = async (req, res) => {
   } catch (error) {
     if (error.code === 11000) {
       return res.status(400).json({ 
-        message: 'Email already exists',
+        message: 'Teacher email already exists',
         error: error.message 
       });
     }
@@ -266,6 +267,7 @@ exports.addTeacher = async (req, res) => {
     });
   }
 };
+
 
 
 
