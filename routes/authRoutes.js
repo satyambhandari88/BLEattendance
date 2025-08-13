@@ -69,20 +69,18 @@ router.post('/admin/login', async (req, res) => {
 });
 
 // Teacher Login
-// Teacher Login
 router.post('/teacher/login', async (req, res) => {
-  const { email, id, password } = req.body;
+  const { email, password } = req.body;
 
   try {
-    const teacher = await Teacher.findOne({ email, id });
+    const teacher = await Teacher.findOne({ email }); // Removed id
     if (teacher && (await bcrypt.compare(password, teacher.password))) {
       const token = generateToken(teacher._id);
 
-      // ✅ Return teacher info under 'teacher' key
       res.json({
         token,
         teacher: {
-          _id: teacher.id,
+          _id: teacher._id,
           name: teacher.name,
           email: teacher.email,
           department: teacher.department,
@@ -95,6 +93,7 @@ router.post('/teacher/login', async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
+
 
 
 // Student Login
