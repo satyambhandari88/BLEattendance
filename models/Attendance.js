@@ -12,6 +12,9 @@ const attendanceSchema = new mongoose.Schema({
   subject: { type: String, required: true }, // Changed to use subject directly
   status: { type: String, enum: ['Present', 'Absent'], default: 'Absent' },
   time: { type: Date, default: Date.now },
+  verificationMethod: { type: String, enum: ['manual', 'face'], default: 'manual' },
+faceVerificationScore: Number,
+lateSubmission: { type: Boolean, default: false }
    
 });
 
