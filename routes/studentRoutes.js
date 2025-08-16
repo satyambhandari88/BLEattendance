@@ -1,33 +1,58 @@
 const express = require('express');
 const router = express.Router();
-const { 
-  fetchNotifications, 
-  submitAttendance, 
-  getAttendanceHistory , enrollFace , verifyFace
-} = require('../controllers/studentController');
+const studentController = require('../controllers/studentController');
 const { authenticateStudent } = require('../middlewares/authMiddleware');
 
-
-// Protect all routes
+// Protect all student routes with authentication middleware
 router.use(authenticateStudent);
 
-// Get class notifications
-router.get('/notifications/:rollNumber', fetchNotifications);
+/**
+ * @route GET /notifications/:rollNumber
+ * @description Get class notifications for a student
+ * @access Private (Student)
+ */
+router.get('/notifications/:rollNumber', studentController.fetchNotifications);
 
-// Submit attendance
-router.post('/attendance', submitAttendance);
+/**
+ * @route POST /attendance
+ * @description Submit student attendance
+ * @access Private (Student)
+ */
+router.post('/attendance', studentController.submitAttendance);
 
-// Get attendance history
-router.get('/attendance-history/:rollNumber', getAttendanceHistory);
+/**
+ * @route GET /attendance-history/:rollNumber
+ * @description Get student's attendance history
+ * @access Private (Student)
+ */
+router.get('/attendance-history/:rollNumber', studentController.getAttendanceHistory);
 
-
-router.post('/enroll-face', enrollFace);
-router.post('/verify-face', verifyFace);
-
-// Add these routes to your student routes file
+/**
+ * @route POST /enroll-face
+ * @description Enroll student's face for facial recognition
+ * @access Private (Student)
+ */
 router.post('/enroll-face', studentController.enrollFace);
+
+/**
+ * @route POST /verify-face-attendance
+ * @description Verify face for attendance marking
+ * @access Private (Student)
+ */
 router.post('/verify-face-attendance', studentController.verifyFaceAttendance);
+
+/**
+ * @route GET /face-status/:rollNumber
+ * @description Check student's face enrollment status
+ * @access Private (Student)
+ */
 router.get('/face-status/:rollNumber', studentController.getFaceEnrollmentStatus);
+
+/**
+ * @route POST /reset-face-enrollment
+ * @description Reset student's face enrollment data
+ * @access Private (Student)
+ */
 router.post('/reset-face-enrollment', studentController.resetFaceEnrollment);
 
 module.exports = router;
