@@ -21,7 +21,7 @@ router.post('/attendance', submitAttendance);
 router.get('/attendance-history/:rollNumber', getAttendanceHistory);
 
 
-router.post('/student/enroll-face', enrollFace);
-router.post('/student/verify-face', verifyFace);
+router.post('/enroll-face', enrollFace);
+router.post('/verify-face', verifyFace);
 
 module.exports = router;
