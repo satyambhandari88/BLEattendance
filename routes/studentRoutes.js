@@ -3,7 +3,7 @@ const router = express.Router();
 const { 
   fetchNotifications, 
   submitAttendance, 
-  getAttendanceHistory 
+  getAttendanceHistory , enrollFace , verifyFace
 } = require('../controllers/studentController');
 const { authenticateStudent } = require('../middlewares/authMiddleware');
 
@@ -19,5 +19,9 @@ router.post('/attendance', submitAttendance);
 
 // Get attendance history
 router.get('/attendance-history/:rollNumber', getAttendanceHistory);
+
+
+router.post('/student/enroll-face', enrollFace);
+router.post('/student/verify-face', verifyFace);
 
 module.exports = router;
