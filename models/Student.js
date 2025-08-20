@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const StudentSchema = new mongoose.Schema({
   rollNumber: {
@@ -27,16 +28,18 @@ const StudentSchema = new mongoose.Schema({
     type: Number,
     required: true,
   },
-  faceEmbedding: {
-    type: String, // Standardized format for face data
+  faceData: {
+    type: String, // Placeholder for facial recognition data
   },
-  faceEnrollmentDate: {
-    type: Date,
-  },
-  faceEnrollmentVersion: {
-    type: String,
-    default: '3.0'
-  }
 }, { timestamps: true });
+
+// Encrypt password before saving
+// StudentSchema.pre('save', async function (next) {
+//   if (!this.isModified('password')) {
+//     next();
+//   }
+//   const salt = await bcrypt.genSalt(10);
+//   this.password = await bcrypt.hash(this.password, salt);
+// });
 
 module.exports = mongoose.model('Student', StudentSchema);
