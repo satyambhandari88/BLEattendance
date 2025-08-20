@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const studentController = require('../controllers/studentController');
 const { authenticateStudent } = require('../middlewares/authMiddleware');
+const Student = require('../models/Student');
 
 // Protect all student routes with authentication middleware
 router.use(authenticateStudent);
@@ -45,6 +46,14 @@ router.post('/enroll-face', authenticateStudent, async (req, res) => {
       });
     }
     
+    // Check if face embedding is too large
+    if (faceEmbedding.length > 10000) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Face data too large' 
+      });
+    }
+    
     // Update student record with face data
     const updatedStudent = await Student.findOneAndUpdate(
       { rollNumber },
@@ -72,7 +81,8 @@ router.post('/enroll-face', authenticateStudent, async (req, res) => {
     console.error('Face enrollment error:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Error enrolling face data' 
+      message: 'Error enrolling face data',
+      error: error.message 
     });
   }
 });
