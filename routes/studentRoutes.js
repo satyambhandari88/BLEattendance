@@ -32,7 +32,50 @@ router.get('/attendance-history/:rollNumber', studentController.getAttendanceHis
  * @description Enroll student's face for facial recognition
  * @access Private (Student)
  */
-router.post('/enroll-face', studentController.enrollFace);
+// Add to studentRoutes.js
+router.post('/enroll-face', authenticateStudent, async (req, res) => {
+  try {
+    const { rollNumber, faceEmbedding, version } = req.body;
+    
+    // Validate input
+    if (!rollNumber || !faceEmbedding) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Roll number and face embedding are required' 
+      });
+    }
+    
+    // Update student record with face data
+    const updatedStudent = await Student.findOneAndUpdate(
+      { rollNumber },
+      { 
+        faceEmbedding,
+        faceEnrollmentDate: new Date(),
+        faceEnrollmentVersion: version || '3.0'
+      },
+      { new: true }
+    );
+    
+    if (!updatedStudent) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Student not found' 
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      message: 'Face enrollment completed successfully'
+    });
+    
+  } catch (error) {
+    console.error('Face enrollment error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error enrolling face data' 
+    });
+  }
+});
 
 /**
  * @route POST /verify-face-attendance
