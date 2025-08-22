@@ -1,5 +1,3 @@
-
-// studentController.js — robust parsing + cosine similarity for face embeddings
 const AddClass = require('../models/AddClass');
 const CreateClass = require('../models/CreateClass');
 const Student = require('../models/Student');
@@ -263,7 +261,7 @@ exports.verifyFaceAttendance = async (req, res) => {
     console.error('❌ Face verification attendance error:', error);
     res.status(500).json({ success: false, message: 'Face verification attendance failed', error: error.message });
   }
-});
+};
 
 // --------- Other existing controllers unchanged (fetchNotifications, submitAttendance, history, status, reset) ---------
 exports.fetchNotifications = async (req, res) => {
