@@ -1,60 +1,38 @@
 const express = require('express');
 const router = express.Router();
-const studentController = require('../controllers/studentController');
+
+const {
+  enrollFace,
+  faceStatus,
+  verifyFace,
+  removeFace,
+  fetchNotifications,
+  submitAttendance,
+  getAttendanceHistory,
+  getFaceEnrollmentStatus,
+  resetFaceEnrollment,
+  verifyFaceAttendance
+} = require('../controllers/studentController');
+
 const { authenticateStudent } = require('../middlewares/authMiddleware');
 
-
-// Protect all student routes with authentication middleware
+// Protect all routes
 router.use(authenticateStudent);
 
-/**
- * @route GET /notifications/:rollNumber
- * @description Get class notifications for a student
- * @access Private (Student)
- */
-router.get('/notifications/:rollNumber', studentController.fetchNotifications);
+// ===== Face enrollment & verification =====
+router.post('/face/enroll', enrollFace);
+router.get('/face/status', faceStatus);
+router.post('/face/verify', verifyFace);
+router.delete('/face/remove', removeFace);
+router.get('/face/enrollment-status/:rollNumber', getFaceEnrollmentStatus);
+router.post('/face/reset-enrollment', resetFaceEnrollment);
+router.post('/face/verify-attendance', verifyFaceAttendance);
 
-/**
- * @route POST /attendance
- * @description Submit student attendance
- * @access Private (Student)
- */
-router.post('/attendance', studentController.submitAttendance);
+// ===== Class notifications =====
+router.get('/notifications/:rollNumber', fetchNotifications);
 
-/**
- * @route GET /attendance-history/:rollNumber
- * @description Get student's attendance history
- * @access Private (Student)
- */
-router.get('/attendance-history/:rollNumber', studentController.getAttendanceHistory);
-
-/**
- * @route POST /enroll-face
- * @description Enroll student's face for facial recognition
- * @access Private (Student)
- */
-// Add to studentRoutes.js
-router.post('/enroll-face', studentController.enrollFace);
-
-/**
- * @route POST /verify-face-attendance
- * @description Verify face for attendance marking
- * @access Private (Student)
- */
-router.post('/verify-face-attendance', studentController.verifyFaceAttendance);
-
-/**
- * @route GET /face-status/:rollNumber
- * @description Check student's face enrollment status
- * @access Private (Student)
- */
-router.get('/face-status/:rollNumber', studentController.getFaceEnrollmentStatus);
-
-/**
- * @route POST /reset-face-enrollment
- * @description Reset student's face enrollment data
- * @access Private (Student)
- */
-router.post('/reset-face-enrollment', studentController.resetFaceEnrollment);
+// ===== Attendance routes =====
+router.post('/attendance', submitAttendance);
+router.get('/attendance-history/:rollNumber', getAttendanceHistory);
 
 module.exports = router;
