@@ -1,9 +1,73 @@
+const path = require('path');
 const AddClass = require('../models/AddClass');
 const CreateClass = require('../models/CreateClass');
 const Student = require('../models/Student');
 const Attendance = require('../models/Attendance');
 const haversine = require('haversine-distance');
 const moment = require('moment-timezone');
+
+// ===== Face Recognition: face-api (tfjs-node) =====
+const faceapi = require('@vladmandic/face-api');
+const canvas = require('canvas');
+const { Canvas, Image, ImageData } = canvas;
+faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
+
+let faceModelsLoaded = false;
+let faceModelLoadPromise = null;
+const MODEL_DIR = process.env.FACE_MODELS_DIR || path.join(__dirname, '../ml/face-api');
+
+async function ensureFaceModels() {
+  if (faceModelsLoaded) return true;
+  if (!faceModelLoadPromise) {
+    faceModelLoadPromise = (async () => {
+      await faceapi.nets.tinyFaceDetector.loadFromDisk(MODEL_DIR);
+      await faceapi.nets.faceLandmark68Net.loadFromDisk(MODEL_DIR);
+      await faceapi.nets.faceRecognitionNet.loadFromDisk(MODEL_DIR);
+      faceModelsLoaded = true;
+      return true;
+    })();
+  }
+  return faceModelLoadPromise;
+}
+
+function euclideanDistance(a = [], b = []) {
+  if (!a || !b || a.length !== b.length) return 1;
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) {
+    const d = a[i] - b[i];
+    sum += d * d;
+  }
+  return Math.sqrt(sum);
+}
+
+function descriptorSimilarityToScore(distance) {
+  // Convert L2 distance to a [0..1] "similarity" score; smaller distance = higher similarity
+  // Typical good threshold for face-api descriptors: 0.45 ~ 0.6 (tune per data)
+  const t = 0.6; // soft threshold
+  const s = Math.max(0, 1 - distance / t);
+  return s; // 1 is perfect
+}
+
+async function descriptorFromBase64(base64) {
+  const img = await canvas.loadImage(`data:image/jpeg;base64,${base64}`);
+  const c = canvas.createCanvas(img.width, img.height);
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+
+  const detection = await faceapi
+    .detectSingleFace(c, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
+    .withFaceLandmarks()
+    .withFaceDescriptor();
+
+  if (!detection) return { ok: false, reason: 'No face detected' };
+
+  // crude "quality": based on face box size vs image
+  const boxArea = detection.detection.box.width * detection.detection.box.height;
+  const imgArea = img.width * img.height;
+  const quality = Math.max(0, Math.min(1, boxArea / (imgArea * 0.25))); // face covers up to ~25% for score=1
+
+  return { ok: true, descriptor: Array.from(detection.descriptor), quality, box: detection.detection.box };
+}
 
 // Helper function to mark absent students
 const markAbsentStudents = async (classDetails) => {
@@ -53,113 +117,180 @@ const markAbsentStudents = async (classDetails) => {
   }
 };
 
-// Helper function to verify face embeddings
-const verifyFaceEmbedding = (storedEmbedding, currentEmbedding) => {
-  try {
-    if (!storedEmbedding || !currentEmbedding) {
-      return {
-        isValid: false,
-        similarity: 0,
-        error: 'Missing embedding data'
-      };
-    }
+// ===================================
+// 📌 FACE ENROLLMENT + VERIFICATION
+// ===================================
 
-    // Split stored embedding by steps (from enrollment)
-    const storedSteps = storedEmbedding.split('|');
-    
-    let maxSimilarity = 0;
-    
-    // Compare with each enrollment step
-    storedSteps.forEach(stepEmbedding => {
-      let matches = 0;
-      const minLength = Math.min(stepEmbedding.length, currentEmbedding.length);
-      
-      // Character-by-character comparison
-      for (let i = 0; i < minLength; i++) {
-        if (stepEmbedding[i] === currentEmbedding[i]) {
-          matches++;
-        }
-      }
-      
-      const similarity = matches / Math.max(stepEmbedding.length, currentEmbedding.length);
-      maxSimilarity = Math.max(maxSimilarity, similarity);
-    });
-    
-    // Verification threshold - adjustable based on security needs
-    const VERIFICATION_THRESHOLD = 0.15; // 15% similarity required
-    
-    return {
-      isValid: maxSimilarity >= VERIFICATION_THRESHOLD,
-      similarity: Math.round(maxSimilarity * 100) / 100,
-      threshold: VERIFICATION_THRESHOLD
-    };
-    
-  } catch (error) {
-    console.error('Face verification comparison error:', error);
-    return {
-      isValid: false,
-      similarity: 0,
-      error: error.message
-    };
-  }
-};
-
-// Face enrollment endpoint
+// POST /api/student/face/enroll
 exports.enrollFace = async (req, res) => {
   try {
-    console.log('🔵 Face enrollment request received:', {
-      rollNumber: req.body.rollNumber,
-      hasEmbedding: !!req.body.faceEmbedding,
-      stepsCount: req.body.livenessSteps?.length || 0
-    });
-    
-    const { rollNumber, faceEmbedding, verificationHash, livenessSteps, enrollmentTimestamp } = req.body;
+    await ensureFaceModels();
 
-    // Validate required fields
-    if (!rollNumber || !faceEmbedding) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'Roll number and face embedding are required' 
-      });
+    const { rollNumber, images = [], samples, avgQuality, version } = req.body || {};
+    if (!rollNumber) {
+      return res.status(400).json({ success: false, message: 'Missing required field: rollNumber' });
+    }
+    if (!Array.isArray(images) || images.length === 0) {
+      return res.status(400).json({ success: false, message: 'Provide at least one face image (base64) in `images`' });
     }
 
-    // Find student
+    // Enforce: user can enroll only their own face
+    if (req.user?.rollNumber && req.user.rollNumber !== rollNumber) {
+      return res.status(403).json({ success: false, message: 'You can only enroll your own face' });
+    }
+
     const student = await Student.findOne({ rollNumber });
-    if (!student) {
-      return res.status(404).json({ 
-        success: false,
-        message: 'Student not found' 
-      });
+    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+
+    // Extract descriptors
+    const results = [];
+    for (const item of images) {
+      const base64 = (item && item.base64) || item; // accept {base64, step} or raw base64
+      const step = (item && item.step) || 'look_center';
+      const out = await descriptorFromBase64(base64);
+      if (out.ok) results.push({ vector: out.descriptor, quality: out.quality, sourceStep: step });
     }
 
-    // Update student record with face data
-    student.faceEmbedding = faceEmbedding;
-    student.faceVerificationHash = verificationHash;
-    student.faceEnrollmentDate = new Date(enrollmentTimestamp || Date.now());
-    student.livenessSteps = livenessSteps || [];
-    student.faceEnrolled = true;
-    
+    if (results.length === 0) {
+      return res.status(422).json({ success: false, message: 'No valid face detected in provided images' });
+    }
+
+    const isUpdate = student.hasFaceEnrolled();
+
+    student.setFaceDescriptors(results, {
+      version: version || 'face-api@1',
+    });
+
+    // allow overriding meta (optional)
+    if (typeof samples === 'number') student.faceEnrollmentData.samples = samples;
+    if (typeof avgQuality === 'number') student.faceEnrollmentData.avgQuality = avgQuality;
+
     await student.save();
 
-    console.log('✅ Face enrollment completed for student:', rollNumber);
-    
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: 'Face enrollment completed successfully',
+      message: isUpdate ? 'Face template updated successfully' : 'Face enrolled successfully',
       data: {
         rollNumber: student.rollNumber,
-        enrollmentDate: student.faceEnrollmentDate,
-        stepsCompleted: livenessSteps?.length || 0
-      }
+        enrollmentDate: student.faceEnrollmentData.enrollmentDate,
+        samples: student.faceEnrollmentData.samples,
+        avgQuality: student.faceEnrollmentData.avgQuality,
+        version: student.faceEnrollmentData.version,
+      },
     });
-
-  } catch (error) {
-    console.error('❌ Face enrollment error:', error);
+  } catch (err) {
+    console.error('❌ Face enrollment error:', err);
     res.status(500).json({
       success: false,
       message: 'Face enrollment failed',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error',
     });
+  }
+};
+
+// GET /api/student/face/status
+exports.faceStatus = async (req, res) => {
+  try {
+    const rollNumber = req.user?.rollNumber || req.query.rollNumber;
+    if (!rollNumber) return res.status(400).json({ success: false, message: 'rollNumber not provided' });
+
+    const student = await Student.findOne({ rollNumber });
+    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+
+    const hasFace = student.hasFaceEnrolled();
+
+    return res.json({
+      success: true,
+      data: {
+        enrolled: hasFace,
+        enrollmentData: hasFace ? student.faceEnrollmentData : null,
+        descriptors: hasFace ? student.faceDescriptors.length : 0,
+        verificationStats: student.verificationStats,
+      },
+    });
+  } catch (err) {
+    console.error('Face status check error:', err);
+    res.status(500).json({ success: false, message: 'Failed to check face enrollment status' });
+  }
+};
+
+// POST /api/student/face/verify
+exports.verifyFace = async (req, res) => {
+  try {
+    await ensureFaceModels();
+
+    const rollNumber = req.user?.rollNumber || req.body.rollNumber;
+    const { image } = req.body || {};
+
+    if (!rollNumber) return res.status(400).json({ success: false, message: 'rollNumber is required' });
+    if (!image) return res.status(400).json({ success: false, message: 'Provide `image` (base64) to verify' });
+
+    const student = await Student.findOne({ rollNumber });
+    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+    if (!student.hasFaceEnrolled()) {
+      return res.status(400).json({ success: false, message: 'No face enrollment found for this student' });
+    }
+
+    const out = await descriptorFromBase64(image);
+    if (!out.ok) {
+      return res.status(422).json({ success: false, message: 'No face detected in provided image' });
+    }
+    const probe = out.descriptor;
+
+    // compare against stored descriptors
+    let best = { distance: 99, idx: -1 };
+    for (let i = 0; i < student.faceDescriptors.length; i++) {
+      const ref = student.faceDescriptors[i]?.vector || [];
+      const d = euclideanDistance(ref, probe);
+      if (d < best.distance) best = { distance: d, idx: i };
+    }
+
+    // threshold tuning: start with 0.55 (stricter than 0.6)
+    const THRESHOLD = parseFloat(process.env.FACE_DISTANCE_THRESHOLD || '0.55');
+    const success = best.distance <= THRESHOLD;
+    const similarity = descriptorSimilarityToScore(best.distance);
+
+    await student.updateVerificationStats(similarity, success);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Verification recorded',
+      data: {
+        verificationSuccess: success,
+        distance: best.distance,
+        similarity,
+        threshold: THRESHOLD,
+        successRate: student.getVerificationSuccessRate(),
+        totalAttempts: student.verificationStats.totalAttempts,
+        lastVerified: student.verificationStats.lastVerified,
+      },
+    });
+  } catch (err) {
+    console.error('Verification recording error:', err);
+    res.status(500).json({ success: false, message: 'Failed to record verification' });
+  }
+};
+
+// DELETE /api/student/face/remove
+exports.removeFace = async (req, res) => {
+  try {
+    const rollNumber = req.user?.rollNumber || req.body.rollNumber;
+    if (!rollNumber) return res.status(400).json({ success: false, message: 'rollNumber is required' });
+
+    const student = await Student.findOne({ rollNumber });
+    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+
+    student.faceDescriptors = [];
+    student.faceEnrolled = false;
+    student.faceEnrollmentData = { samples: 0, avgQuality: 0, version: 'face-api@1', enrollmentDate: null };
+    student.verificationStats = { totalAttempts: 0, successfulVerifications: 0, lastVerified: null, averageSimilarity: 0 };
+
+    await student.save();
+
+    res.json({ success: true, message: 'Face enrollment removed successfully' });
+  } catch (err) {
+    console.error('Face removal error:', err);
+    res.status(500).json({ success: false, message: 'Failed to remove face enrollment' });
   }
 };
 
@@ -207,25 +338,48 @@ exports.verifyFaceAttendance = async (req, res) => {
       });
     }
 
-    // Verify face embedding
-    const verificationResult = verifyFaceEmbedding(student.faceEmbedding, faceEmbedding);
+    // Verify face embedding using the new face-api method
+    await ensureFaceModels();
+    const out = await descriptorFromBase64(faceEmbedding);
+    if (!out.ok) {
+      return res.status(422).json({ 
+        success: false,
+        message: 'No face detected in provided image' 
+      });
+    }
     
-    if (!verificationResult.isValid) {
+    const probe = out.descriptor;
+    const storedEmbedding = student.faceEmbedding;
+    
+    // Convert stored embedding string to array
+    const storedArray = storedEmbedding.split(',').map(Number);
+    
+    // Calculate distance
+    const distance = euclideanDistance(storedArray, probe);
+    const similarity = descriptorSimilarityToScore(distance);
+    
+    // threshold tuning: start with 0.55 (stricter than 0.6)
+    const THRESHOLD = parseFloat(process.env.FACE_DISTANCE_THRESHOLD || '0.55');
+    const isValid = distance <= THRESHOLD;
+    
+    if (!isValid) {
       console.warn('⚠️ Face verification failed:', {
-        similarity: verificationResult.similarity,
-        threshold: verificationResult.threshold
+        distance: distance,
+        similarity: similarity,
+        threshold: THRESHOLD
       });
       return res.status(403).json({ 
         success: false,
         message: 'Face verification failed. Please try again or use manual check-in.',
-        similarity: verificationResult.similarity,
-        required: verificationResult.threshold
+        similarity: similarity,
+        required: THRESHOLD
       });
     }
 
     console.log('✅ Face verification successful:', {
-      similarity: verificationResult.similarity,
-      threshold: verificationResult.threshold
+      distance: distance,
+      similarity: similarity,
+      threshold: THRESHOLD
     });
 
     // Proceed with location and beacon validation
@@ -240,13 +394,13 @@ exports.verifyFaceAttendance = async (req, res) => {
     // Location validation
     const userLocation = { latitude, longitude };
     const classLocation = { latitude: geoData.latitude, longitude: geoData.longitude };
-    const distance = haversine(userLocation, classLocation);
+    const distanceMeters = haversine(userLocation, classLocation);
 
-    if (distance > geoData.radius) {
+    if (distanceMeters > geoData.radius) {
       return res.status(403).json({ 
         success: false,
         message: 'You are not within the class area',
-        distance: Math.round(distance),
+        distance: Math.round(distanceMeters),
         allowedRadius: geoData.radius
       });
     }
@@ -305,7 +459,7 @@ exports.verifyFaceAttendance = async (req, res) => {
       status: 'Present',
       time: now.toDate(),
       verificationMethod: 'face',
-      faceVerificationScore: verificationResult.similarity
+      faceVerificationScore: similarity
     };
 
     // Check if late submission
@@ -328,7 +482,7 @@ exports.verifyFaceAttendance = async (req, res) => {
     console.log('✅ Face verification attendance marked successfully:', {
       rollNumber,
       className: classDetails.className,
-      similarity: verificationResult.similarity,
+      similarity: similarity,
       late: attendanceData.lateSubmission || false
     });
 
@@ -338,7 +492,7 @@ exports.verifyFaceAttendance = async (req, res) => {
       data: {
         className: classDetails.className,
         subject: classDetails.subject,
-        verificationScore: verificationResult.similarity,
+        verificationScore: similarity,
         timestamp: attendance.time,
         lateSubmission: attendanceData.lateSubmission || false
       }
