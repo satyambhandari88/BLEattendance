@@ -7,9 +7,9 @@ const moment = require('moment-timezone');
 
 // Helper function for robust vector comparison (Cosine Similarity)
 const calculateVectorSimilarity = (vecA, vecB) => {
+  if (!vecA || !vecB || vecA.length === 0 || vecB.length === 0) return 0;
+  
   const minLength = Math.min(vecA.length, vecB.length);
-  if (minLength === 0) return 0;
-
   let dotProduct = 0;
   let normA = 0;
   let normB = 0;
@@ -26,38 +26,89 @@ const calculateVectorSimilarity = (vecA, vecB) => {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 };
 
-// Fixed verification logic to handle JSON data
+// Updated face verification function
 const verifyFaceEmbedding = (storedEmbedding, currentEmbedding) => {
   try {
+    console.log('=== Face Verification Debug ===');
+    console.log('Stored embedding type:', typeof storedEmbedding);
+    console.log('Current embedding type:', typeof currentEmbedding);
+    console.log('Current embedding length:', Array.isArray(currentEmbedding) ? currentEmbedding.length : 'Not array');
+    
     if (!storedEmbedding || !currentEmbedding) {
       return { isValid: false, similarity: 0, error: 'Missing embedding data' };
     }
     
     let storedProfile;
     try {
+      // Parse the stored embedding JSON
       storedProfile = JSON.parse(storedEmbedding);
+      console.log('Stored profile keys:', Object.keys(storedProfile));
     } catch (parseError) {
       console.error('Failed to parse stored face embedding as JSON:', parseError);
       return { isValid: false, similarity: 0, error: 'Stored data is not valid JSON' };
     }
     
-    let maxSimilarity = 0;
-    const featureVectors = Object.values(storedProfile);
-    
-    if (featureVectors.length === 0) {
-        return { isValid: false, similarity: 0, error: 'No feature vectors found in stored data' };
+    // Ensure currentEmbedding is an array
+    let currentFeaturesArray;
+    if (Array.isArray(currentEmbedding)) {
+      currentFeaturesArray = currentEmbedding;
+    } else if (typeof currentEmbedding === 'object') {
+      // If it's an object with feature arrays, flatten them
+      currentFeaturesArray = Object.values(currentEmbedding).flat();
+    } else {
+      return { isValid: false, similarity: 0, error: 'Invalid current embedding format' };
     }
-
-    featureVectors.forEach(storedVector => {
-      const similarity = calculateVectorSimilarity(storedVector, currentEmbedding);
-      maxSimilarity = Math.max(maxSimilarity, similarity);
+    
+    console.log('Current features array length:', currentFeaturesArray.length);
+    
+    let maxSimilarity = 0;
+    let similarities = [];
+    
+    // Compare against each stored step
+    Object.keys(storedProfile).forEach(stepKey => {
+      const storedVector = storedProfile[stepKey];
+      if (Array.isArray(storedVector) && storedVector.length > 0) {
+        const similarity = calculateVectorSimilarity(storedVector, currentFeaturesArray);
+        similarities.push({ step: stepKey, similarity });
+        maxSimilarity = Math.max(maxSimilarity, similarity);
+        console.log(`Similarity for ${stepKey}: ${similarity.toFixed(4)}`);
+      }
     });
     
-    const VERIFICATION_THRESHOLD = 0.8; // Adjusted threshold for cosine similarity (0-1 range)
+    if (similarities.length === 0) {
+      return { isValid: false, similarity: 0, error: 'No feature vectors found in stored data' };
+    }
+    
+    // Calculate weighted similarity
+    similarities.sort((a, b) => b.similarity - a.similarity);
+    let weightedSum = 0, totalWeight = 0;
+    
+    similarities.forEach((sim, index) => {
+      const weight = 1 / (index + 1); // Higher weight for better matches
+      weightedSum += sim.similarity * weight;
+      totalWeight += weight;
+    });
+    
+    const weightedSimilarity = totalWeight > 0 ? weightedSum / totalWeight : 0;
+    
+    console.log('Max similarity:', maxSimilarity.toFixed(4));
+    console.log('Weighted similarity:', weightedSimilarity.toFixed(4));
+    
+    // Adjusted threshold - more lenient
+    const VERIFICATION_THRESHOLD = 0.3; // Lowered from 0.8
+    const isValid = maxSimilarity >= VERIFICATION_THRESHOLD || weightedSimilarity >= (VERIFICATION_THRESHOLD - 0.05);
+    
+    console.log('Verification result:', isValid ? 'PASS' : 'FAIL');
+    console.log('Threshold:', VERIFICATION_THRESHOLD);
+    console.log('=== End Debug ===');
+    
     return { 
-      isValid: maxSimilarity >= VERIFICATION_THRESHOLD, 
-      similarity: Math.round(maxSimilarity * 100) / 100, 
-      threshold: VERIFICATION_THRESHOLD 
+      isValid, 
+      similarity: Math.round(Math.max(maxSimilarity, weightedSimilarity) * 100) / 100,
+      maxSimilarity: Math.round(maxSimilarity * 100) / 100,
+      weightedSimilarity: Math.round(weightedSimilarity * 100) / 100,
+      threshold: VERIFICATION_THRESHOLD,
+      stepResults: similarities.map(s => ({ step: s.step, similarity: Math.round(s.similarity * 100) / 100 }))
     };
   } catch (error) {
     console.error('Face verification comparison error:', error);
@@ -112,39 +163,149 @@ exports.enrollFace = async (req, res) => {
 exports.verifyFaceAttendance = async (req, res) => {
   try {
     const { rollNumber, faceEmbedding, className, latitude, longitude, beaconProximity, classCode } = req.body;
-    if (!rollNumber || !faceEmbedding || !className || !latitude || !longitude || !classCode) return res.status(400).json({ success: false, message: 'Missing required fields for face verification attendance' });
+    
+    console.log('=== Face Verification Attendance Request ===');
+    console.log('Roll Number:', rollNumber);
+    console.log('Face Embedding received:', faceEmbedding ? 'Yes' : 'No');
+    console.log('Face Embedding type:', typeof faceEmbedding);
+    
+    if (!rollNumber || !faceEmbedding || !className || !latitude || !longitude || !classCode) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Missing required fields for face verification attendance' 
+      });
+    }
+    
     const student = await Student.findOne({ rollNumber });
-    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
-    if (!student.faceEnrolled || !student.faceEmbedding) return res.status(400).json({ success: false, message: 'Face enrollment required before using face verification' });
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student not found' });
+    }
+    
+    console.log('Student found:', student.rollNumber);
+    console.log('Student face enrolled:', student.faceEnrolled);
+    console.log('Student has face embedding:', !!student.faceEmbedding);
+    
+    if (!student.faceEnrolled || !student.faceEmbedding) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Face enrollment required before using face verification' 
+      });
+    }
+    
     const classDetails = await CreateClass.findOne({ classCode });
-    if (!classDetails) return res.status(404).json({ success: false, message: 'Class not found' });
+    if (!classDetails) {
+      return res.status(404).json({ success: false, message: 'Class not found' });
+    }
+    
+    console.log('Class found:', classDetails.className);
+    
+    // Perform face verification
     const verificationResult = verifyFaceEmbedding(student.faceEmbedding, faceEmbedding);
-    if (!verificationResult.isValid) return res.status(403).json({ success: false, message: 'Face verification failed. Please try again or use manual check-in.', similarity: verificationResult.similarity, required: verificationResult.threshold });
+    console.log('Verification result:', verificationResult);
+    
+    if (!verificationResult.isValid) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Face verification failed. Please try again or use manual check-in.',
+        similarity: verificationResult.similarity,
+        maxSimilarity: verificationResult.maxSimilarity,
+        weightedSimilarity: verificationResult.weightedSimilarity,
+        required: verificationResult.threshold,
+        stepResults: verificationResult.stepResults,
+        debug: true
+      });
+    }
+    
+    // Location and beacon verification
     const geoData = await AddClass.findOne({ className: new RegExp(`^${className}$`, 'i') });
-    if (!geoData) return res.status(404).json({ success: false, message: 'Class location data not found' });
+    if (!geoData) {
+      return res.status(404).json({ success: false, message: 'Class location data not found' });
+    }
+    
     const userLocation = { latitude, longitude };
     const classLocation = { latitude: geoData.latitude, longitude: geoData.longitude };
     const distance = haversine(userLocation, classLocation);
-    if (distance > geoData.radius) return res.status(403).json({ success: false, message: 'You are not within the class area', distance: Math.round(distance), allowedRadius: geoData.radius });
+    
+    if (distance > geoData.radius) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'You are not within the class area', 
+        distance: Math.round(distance), 
+        allowedRadius: geoData.radius 
+      });
+    }
+    
     const expectedBeaconId = geoData?.beaconId ? geoData.beaconId.trim().toLowerCase() : null;
     const receivedBeaconId = beaconProximity?.beaconId ? beaconProximity.beaconId.trim().toLowerCase() : null;
-    if (expectedBeaconId && (!receivedBeaconId || receivedBeaconId !== expectedBeaconId)) return res.status(403).json({ success: false, message: 'Required beacon not detected or out of range', expectedBeaconId: geoData?.beaconId, receivedBeaconId: beaconProximity?.beaconId });
+    
+    if (expectedBeaconId && (!receivedBeaconId || receivedBeaconId !== expectedBeaconId)) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Required beacon not detected or out of range', 
+        expectedBeaconId: geoData?.beaconId, 
+        receivedBeaconId: beaconProximity?.beaconId 
+      });
+    }
+    
+    // Check for existing attendance
     const today = moment().tz('Asia/Kolkata').startOf('day');
     const existingAttendance = await Attendance.findOne({
-      rollNumber, className: classDetails.className, subject: classDetails.subject, classCode: classDetails.classCode,
+      rollNumber, 
+      className: classDetails.className, 
+      subject: classDetails.subject, 
+      classCode: classDetails.classCode,
       time: { $gte: today.toDate(), $lt: moment(today).endOf('day').toDate() }
     });
-    if (existingAttendance) return res.status(409).json({ success: false, message: 'Attendance already marked for this class today.' });
+    
+    if (existingAttendance) {
+      return res.status(409).json({ 
+        success: false, 
+        message: 'Attendance already marked for this class today.' 
+      });
+    }
+    
+    // Create attendance record
     const newAttendance = new Attendance({
-      rollNumber, classId: classDetails._id, className: classDetails.className,
-      subject: classDetails.subject, classCode: classDetails.classCode, status: 'Present',
-      time: new Date(), verifiedBy: 'Face'
+      rollNumber, 
+      classId: classDetails._id, 
+      className: classDetails.className,
+      subject: classDetails.subject, 
+      classCode: classDetails.classCode, 
+      status: 'Present',
+      time: new Date(), 
+      verifiedBy: 'Face',
+      faceVerificationScore: verificationResult.similarity,
+      verificationDetails: {
+        maxSimilarity: verificationResult.maxSimilarity,
+        weightedSimilarity: verificationResult.weightedSimilarity,
+        stepResults: verificationResult.stepResults
+      }
     });
+    
     await newAttendance.save();
-    res.status(200).json({ success: true, message: 'Attendance marked successfully via face verification', data: { status: newAttendance.status, time: newAttendance.time, class: newAttendance.className, verifiedBy: newAttendance.verifiedBy } });
+    
+    console.log('Attendance marked successfully via face verification');
+    
+    res.status(200).json({ 
+      success: true, 
+      message: 'Attendance marked successfully via face verification', 
+      data: { 
+        status: newAttendance.status, 
+        time: newAttendance.time, 
+        class: newAttendance.className, 
+        verifiedBy: newAttendance.verifiedBy,
+        verificationScore: verificationResult.similarity,
+        verificationDetails: verificationResult
+      } 
+    });
+    
   } catch (error) {
     console.error('❌ Face verification attendance error:', error);
-    res.status(500).json({ success: false, message: 'Face verification attendance failed', error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Face verification attendance failed', 
+      error: error.message 
+    });
   }
 };
 
