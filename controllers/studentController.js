@@ -30,37 +30,39 @@ const markAbsentStudents = async (classDetails) => {
   } catch (error) { console.error('Error in markAbsentStudents:', error); }
 };
 
-const calculateCosineSimilarity = (features1, features2) => {
+const verifyFaceEmbedding = (storedEmbedding, currentEmbedding) => {
   try {
-    const parsedFeatures1 = JSON.parse(features1);
-    const parsedFeatures2 = JSON.parse(features2);
+    if (!storedEmbedding || !currentEmbedding) return { isValid: false, similarity: 0, error: 'Missing embedding data' };
 
-    const flatFeatures1 = Object.values(parsedFeatures1).flat();
-    const flatFeatures2 = Object.values(parsedFeatures2).flat();
+    const storedVectors = storedEmbedding.split('||').map(s => s.split('|').map(parseFloat));
+    const currentVector = currentEmbedding.split('|').map(parseFloat);
 
-    const minLength = Math.min(flatFeatures1.length, flatFeatures2.length);
-    if (minLength === 0) return 0;
+    let maxSimilarity = 0;
+    
+    // Helper function for cosine similarity
+    const calculateCosineSimilarity = (v1, v2) => {
+        const dotProduct = v1.reduce((sum, a, i) => sum + a * (v2[i] || 0), 0);
+        const magnitude1 = Math.sqrt(v1.reduce((sum, a) => sum + a * a, 0));
+        const magnitude2 = Math.sqrt(v2.reduce((sum, a) => sum + a * a, 0));
+        if (magnitude1 === 0 || magnitude2 === 0) return 0;
+        return dotProduct / (magnitude1 * magnitude2);
+    };
 
-    let dotProduct = 0;
-    let norm1 = 0;
-    let norm2 = 0;
+    storedVectors.forEach(storedVector => {
+        if (storedVector.some(isNaN) || currentVector.some(isNaN)) return;
+        const similarity = calculateCosineSimilarity(storedVector, currentVector);
+        maxSimilarity = Math.max(maxSimilarity, similarity);
+    });
 
-    for (let i = 0; i < minLength; i++) {
-      const f1 = flatFeatures1[i] || 0;
-      const f2 = flatFeatures2[i] || 0;
-      dotProduct += f1 * f2;
-      norm1 += f1 * f1;
-      norm2 += f2 * f2;
-    }
-
-    if (norm1 === 0 || norm2 === 0) {
-      return 0;
-    }
-
-    return dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
+    const VERIFICATION_THRESHOLD = 0.40; // Increased threshold for better accuracy
+    return { 
+        isValid: maxSimilarity >= VERIFICATION_THRESHOLD, 
+        similarity: Math.round(maxSimilarity * 100) / 100, 
+        threshold: VERIFICATION_THRESHOLD 
+    };
   } catch (error) {
-    console.error('Cosine similarity calculation error:', error);
-    return 0;
+    console.error('Face verification comparison error:', error);
+    return { isValid: false, similarity: 0, error: error.message };
   }
 };
 
@@ -70,10 +72,12 @@ exports.enrollFace = async (req, res) => {
     if (!rollNumber || !faceEmbedding) return res.status(400).json({ success: false, message: 'Roll number and face embedding are required' });
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+    
     student.faceEmbedding = faceEmbedding;
     student.faceEnrollmentDate = new Date(enrollmentTimestamp || Date.now());
     student.livenessSteps = livenessSteps || [];
     student.faceEnrolled = true;
+    
     await student.save();
     res.status(200).json({ success: true, message: 'Face enrollment completed successfully', data: { rollNumber: student.rollNumber, enrollmentDate: student.faceEnrollmentDate, stepsCompleted: livenessSteps?.length || 0 } });
   } catch (error) {
@@ -89,39 +93,30 @@ exports.verifyFaceAttendance = async (req, res) => {
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
     if (!student.faceEnrolled || !student.faceEmbedding) return res.status(400).json({ success: false, message: 'Face enrollment required before using face verification' });
-
     const classDetails = await CreateClass.findOne({ classCode });
     if (!classDetails) return res.status(404).json({ success: false, message: 'Class not found' });
-
-    const similarity = calculateCosineSimilarity(student.faceEmbedding, faceEmbedding);
-    const VERIFICATION_THRESHOLD = 0.55; 
-    const isValid = similarity >= VERIFICATION_THRESHOLD;
     
-    if (!isValid) return res.status(403).json({ success: false, message: 'Face verification failed. Please try again or use manual check-in.', similarity: Math.round(similarity * 100) / 100, required: VERIFICATION_THRESHOLD });
-
+    const verificationResult = verifyFaceEmbedding(student.faceEmbedding, faceEmbedding);
+    if (!verificationResult.isValid) return res.status(403).json({ success: false, message: 'Face verification failed. Please try again or use manual check-in.', similarity: verificationResult.similarity, required: verificationResult.threshold });
+    
     const geoData = await AddClass.findOne({ className: new RegExp(`^${className}$`, 'i') });
     if (!geoData) return res.status(404).json({ success: false, message: 'Class location data not found' });
     const userLocation = { latitude, longitude };
     const classLocation = { latitude: geoData.latitude, longitude: geoData.longitude };
     const distance = haversine(userLocation, classLocation);
     if (distance > geoData.radius) return res.status(403).json({ success: false, message: 'You are not within the class area', distance: Math.round(distance), allowedRadius: geoData.radius });
-
     const expectedBeaconId = geoData?.beaconId ? geoData.beaconId.trim().toLowerCase() : null;
     const receivedBeaconId = beaconProximity?.beaconId ? beaconProximity.beaconId.trim().toLowerCase() : null;
     if (expectedBeaconId && (!receivedBeaconId || receivedBeaconId !== expectedBeaconId)) return res.status(403).json({ success: false, message: 'Required beacon not detected or out of range', expectedBeaconId: geoData?.beaconId, receivedBeaconId: beaconProximity?.beaconId });
-    
     const now = moment().tz('Asia/Kolkata');
     const classDate = moment.tz(`${classDetails.date} ${classDetails.startTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
     const classEndDate = moment.tz(`${classDetails.date} ${classDetails.endTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
     const attendanceWindowEnd = moment(classDate).add(15, 'minutes');
     if (now.isAfter(classEndDate)) return res.status(403).json({ success: false, message: 'Class has already ended' });
-    
     const existingAttendance = await Attendance.findOne({ rollNumber, className: classDetails.className, subject: classDetails.subject, time: { $gte: moment(classDate).startOf('day').toDate(), $lt: moment(classDate).endOf('day').toDate() } });
     if (existingAttendance && existingAttendance.status === 'Present') return res.status(400).json({ success: false, message: 'Attendance already marked for this class' });
-    
-    const attendanceData = { rollNumber, classId: classDetails._id, className: classDetails.className, subject: classDetails.subject, classCode: classDetails.classCode, status: 'Present', time: now.toDate(), verificationMethod: 'face', faceVerificationScore: Math.round(similarity * 100) / 100 };
+    const attendanceData = { rollNumber, classId: classDetails._id, className: classDetails.className, subject: classDetails.subject, classCode: classDetails.classCode, status: 'Present', time: now.toDate(), verificationMethod: 'face', faceVerificationScore: verificationResult.similarity };
     if (now.isAfter(attendanceWindowEnd)) attendanceData.lateSubmission = true;
-    
     let attendance;
     if (existingAttendance) {
       Object.assign(existingAttendance, attendanceData);
@@ -131,8 +126,7 @@ exports.verifyFaceAttendance = async (req, res) => {
       attendance = new Attendance(attendanceData);
       await attendance.save();
     }
-    
-    res.status(200).json({ success: true, message: `Attendance marked successfully using face verification${attendanceData.lateSubmission ? ' (Late)' : ''}`, data: { className: classDetails.className, subject: classDetails.subject, verificationScore: attendanceData.faceVerificationScore, timestamp: attendance.time, lateSubmission: attendanceData.lateSubmission || false } });
+    res.status(200).json({ success: true, message: `Attendance marked successfully using face verification${attendanceData.lateSubmission ? ' (Late)' : ''}`, data: { className: classDetails.className, subject: classDetails.subject, verificationScore: verificationResult.similarity, timestamp: attendance.time, lateSubmission: attendanceData.lateSubmission || false } });
   } catch (error) {
     console.error('❌ Face verification attendance error:', error);
     res.status(500).json({ success: false, message: 'Face verification attendance failed', error: error.message });
@@ -234,11 +228,11 @@ exports.getAttendanceHistory = async (req, res) => {
       lateSubmission: record.lateSubmission || false, autoMarked: record.autoMarked || false,
       verificationMethod: record.verificationMethod || 'manual', faceVerificationScore: record.faceVerificationScore || null
     }));
-    const totalClasses = attendanceHistory.length;
-    const presentClasses = attendanceHistory.filter(record => record.status === 'Present').length;
-    const absentClasses = attendanceHistory.filter(record => record.status === 'Absent').length;
-    const lateSubmissions = attendanceHistory.filter(record => record.lateSubmission).length;
-    const faceVerifications = attendanceHistory.filter(record => record.verificationMethod === 'face').length;
+    const totalClasses = formattedHistory.length;
+    const presentClasses = formattedHistory.filter(record => record.status === 'Present').length;
+    const absentClasses = formattedHistory.filter(record => record.status === 'Absent').length;
+    const lateSubmissions = formattedHistory.filter(record => record.lateSubmission).length;
+    const faceVerifications = formattedHistory.filter(record => record.verificationMethod === 'face').length;
     const attendancePercentage = totalClasses > 0 ? Math.round((presentClasses / totalClasses) * 100) : 0;
     res.status(200).json({ success: true, history: formattedHistory, statistics: { totalClasses, presentClasses, absentClasses, lateSubmissions, faceVerifications, attendancePercentage }, studentInfo: { rollNumber: student.rollNumber, faceEnrolled: student.faceEnrolled || false, faceEnrollmentDate: student.faceEnrollmentDate || null } });
   } catch (error) {
@@ -265,6 +259,7 @@ exports.resetFaceEnrollment = async (req, res) => {
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
     student.faceEmbedding = null;
+    student.faceVerificationHash = null;
     student.faceEnrollmentDate = null;
     student.livenessSteps = [];
     student.faceEnrolled = false;
