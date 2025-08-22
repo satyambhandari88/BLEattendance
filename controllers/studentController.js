@@ -4,8 +4,6 @@ const Student = require('../models/Student');
 const Attendance = require('../models/Attendance');
 const haversine = require('haversine-distance');
 const moment = require('moment-timezone');
-const { calculateCosineSimilarity } = require('../utils/faceUtils');
-const crypto = require('crypto');
 
 const markAbsentStudents = async (classDetails) => {
   try {
@@ -32,6 +30,27 @@ const markAbsentStudents = async (classDetails) => {
   } catch (error) {
     console.error('Error marking absent students:', error);
   }
+};
+
+const calculateCosineSimilarity = (features1, features2) => {
+  const minLength = Math.min(features1.length, features2.length);
+  if (minLength === 0) return 0;
+
+  let dotProduct = 0;
+  let norm1 = 0;
+  let norm2 = 0;
+
+  for (let i = 0; i < minLength; i++) {
+    dotProduct += features1[i] * features2[i];
+    norm1 += features1[i] * features1[i];
+    norm2 += features2[i] * features2[i];
+  }
+
+  if (norm1 === 0 || norm2 === 0) {
+    return 0;
+  }
+
+  return dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
 };
 
 exports.enrollFace = async (req, res) => {
