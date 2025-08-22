@@ -9,7 +9,12 @@ const StudentSchema = new mongoose.Schema({
   department: { type: String, required: true },
   deviceId: { type: String, default: null },
   year: { type: Number, required: true },
-  faceData: { type: String }
+  faceEnrolled: { type: Boolean, default: false },
+  faceEmbedding: { type: String, default: null },
+  faceEnrollmentDate: { type: Date, default: null },
+  livenessSteps: { type: [Object], default: [] }
 }, { timestamps: true });
+
+
 
 module.exports = mongoose.model('Student', StudentSchema);
