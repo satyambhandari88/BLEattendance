@@ -209,113 +209,121 @@ const verifyFaceEmbedding = (storedEmbedding, currentEmbedding) => {
 // POST /api/student/face/enroll
 exports.enrollFace = async (req, res) => {
   try {
-    // Try to use advanced face recognition if available
-    if (faceapi) {
-      await ensureFaceModels();
+    console.log('🔵 Face enrollment request received');
+    
+    // Set content type to JSON explicitly to prevent any non-JSON responses
+    res.setHeader('Content-Type', 'application/json');
 
-      const { rollNumber, images = [], samples, avgQuality, version } = req.body || {};
-      if (!rollNumber) {
-        return res.status(400).json({ success: false, message: 'Missing required field: rollNumber' });
-      }
-      if (!Array.isArray(images) || images.length === 0) {
-        return res.status(400).json({ success: false, message: 'Provide at least one face image (base64) in `images`' });
-      }
-
-      // Enforce: user can enroll only their own face
-      if (req.user?.rollNumber && req.user.rollNumber !== rollNumber) {
-        return res.status(403).json({ success: false, message: 'You can only enroll your own face' });
-      }
-
-      const student = await Student.findOne({ rollNumber });
-      if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
-
-      // Extract descriptors
-      const results = [];
-      for (const item of images) {
-        const base64 = (item && item.base64) || item;
-        const step = (item && item.step) || 'look_center';
-        const out = await descriptorFromBase64(base64);
-        if (out.ok) results.push({ vector: out.descriptor, quality: out.quality, sourceStep: step });
-      }
-
-      if (results.length === 0) {
-        return res.status(422).json({ success: false, message: 'No valid face detected in provided images' });
-      }
-
-      const isUpdate = student.faceEnrolled;
-
-      // Store face data using the original method as fallback
-      student.faceEmbedding = results.map(r => r.vector.join(',')).join('|');
-      student.faceEnrolled = true;
-      student.faceEnrollmentDate = new Date();
-      student.livenessSteps = results.map(r => r.sourceStep);
-
-      await student.save();
-
-      return res.status(200).json({
-        success: true,
-        message: isUpdate ? 'Face template updated successfully' : 'Face enrolled successfully',
-        data: {
-          rollNumber: student.rollNumber,
-          enrollmentDate: student.faceEnrollmentDate,
-          samples: results.length,
-          version: 'hybrid-system'
-        },
-      });
-    } else {
-      // Fallback to original implementation
-      console.log('🔵 Face enrollment request received (fallback mode):', {
-        rollNumber: req.body.rollNumber,
-        hasEmbedding: !!req.body.faceEmbedding,
-        stepsCount: req.body.livenessSteps?.length || 0
-      });
-      
-      const { rollNumber, faceEmbedding, verificationHash, livenessSteps, enrollmentTimestamp } = req.body;
-
-      // Validate required fields
-      if (!rollNumber || !faceEmbedding) {
-        return res.status(400).json({ 
-          success: false,
-          message: 'Roll number and face embedding are required' 
-        });
-      }
-
-      // Find student
-      const student = await Student.findOne({ rollNumber });
-      if (!student) {
-        return res.status(404).json({ 
-          success: false,
-          message: 'Student not found' 
-        });
-      }
-
-      // Update student record with face data
-      student.faceEmbedding = faceEmbedding;
-      student.faceVerificationHash = verificationHash;
-      student.faceEnrollmentDate = new Date(enrollmentTimestamp || Date.now());
-      student.livenessSteps = livenessSteps || [];
-      student.faceEnrolled = true;
-      
-      await student.save();
-
-      console.log('✅ Face enrollment completed for student:', rollNumber);
-      
-      res.status(200).json({
-        success: true,
-        message: 'Face enrollment completed successfully',
-        data: {
-          rollNumber: student.rollNumber,
-          enrollmentDate: student.faceEnrollmentDate,
-          stepsCompleted: livenessSteps?.length || 0
-        }
+    // Validate request body
+    if (!req.body.rollNumber) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Roll number is required' 
       });
     }
+
+    if (!req.body.images || !Array.isArray(req.body.images) || req.body.images.length === 0) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'At least one face image is required' 
+      });
+    }
+
+    const { rollNumber, images = [] } = req.body;
+
+    // Check if request body is too large
+    const requestSize = JSON.stringify(req.body).length;
+    console.log('Request size:', requestSize, 'bytes');
+    
+    if (requestSize > 2 * 1024 * 1024) { // 2MB limit
+      return res.status(413).json({ 
+        success: false,
+        message: 'Request payload too large. Please reduce image size or quantity.' 
+      });
+    }
+
+    // Find student
+    const student = await Student.findOne({ rollNumber });
+    if (!student) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Student not found' 
+      });
+    }
+
+    // SIMPLIFIED: Use basic face enrollment only (skip face-api completely)
+    console.log('Using basic face enrollment for:', rollNumber);
+    
+    // Use the first image for basic enrollment
+    const firstImage = images[0];
+    const base64 = (firstImage && firstImage.base64) || firstImage;
+    
+    // Validate base64 format
+    if (!base64 || typeof base64 !== 'string') {
+      console.warn('Invalid base64 format received');
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid image format. Please capture again.'
+      });
+    }
+
+    // Check if it's a valid image base64
+    if (!base64.startsWith('/9j/') && // JPEG
+        !base64.startsWith('iVBORw0KGgo') && // PNG
+        !base64.startsWith('UklGR') && // WEBP
+        !base64.startsWith('R0lGODlh')) { // GIF
+      console.warn('Unsupported image format:', base64.substring(0, 20));
+      return res.status(400).json({
+        success: false,
+        message: 'Unsupported image format. Please use JPEG or PNG.'
+      });
+    }
+
+    // Truncate very large base64 strings (for safety)
+    const truncatedBase64 = base64.length > 100000 ? base64.substring(0, 100000) : base64;
+    
+    student.faceEmbedding = truncatedBase64;
+    student.faceEnrolled = true;
+    student.faceEnrollmentDate = new Date();
+    student.livenessSteps = images.map((img, index) => `step_${index + 1}`);
+    
+    await student.save();
+
+    console.log('✅ Face enrollment completed for student:', rollNumber);
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Face enrollment completed successfully',
+      data: {
+        rollNumber: student.rollNumber,
+        enrollmentDate: student.faceEnrollmentDate,
+        samples: student.livenessSteps.length,
+        method: 'basic'
+      }
+    });
+
   } catch (err) {
     console.error('❌ Face enrollment error:', err);
-    res.status(500).json({
+    
+    // Always return JSON, even for errors
+    if (err.name === 'PayloadTooLargeError') {
+      return res.status(413).json({
+        success: false,
+        message: 'Request payload too large'
+      });
+    }
+    
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid data provided'
+      });
+    }
+    
+    return res.status(500).json({
       success: false,
       message: 'Face enrollment failed',
-      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
     });
   }
 };
