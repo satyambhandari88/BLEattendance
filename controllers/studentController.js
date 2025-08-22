@@ -5,81 +5,6 @@ const Attendance = require('../models/Attendance');
 const haversine = require('haversine-distance');
 const moment = require('moment-timezone');
 
-// ---------- Helpers for embeddings ----------
-const isNumberArray = (arr) => Array.isArray(arr) && arr.every((x) => typeof x === 'number' && isFinite(x));
-const l2norm = (v) => Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
-const normalize = (v) => {
-  const n = l2norm(v);
-  return v.map((x) => x / n);
-};
-const cosine = (a, b) => {
-  if (!isNumberArray(a) || !isNumberArray(b)) return 0;
-  const n = Math.min(a.length, b.length);
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < n; i++) {
-    const x = a[i] || 0, y = b[i] || 0;
-    dot += x * y; na += x * x; nb += y * y;
-  }
-  if (!na || !nb) return 0;
-  const sim = dot / (Math.sqrt(na) * Math.sqrt(nb));
-  return Math.max(0, Math.min(1, sim));
-};
-
-// Try to parse a string that may be JSON or base64-encoded JSON
-function tryParsePossiblyBase64(str) {
-  if (typeof str !== 'string') return null;
-  str = str.trim();
-  // quick check: looks like JSON already
-  if (str.startsWith('{') || str.startsWith('[')) {
-    try { return JSON.parse(str); } catch (e) { /* fallthrough */ }
-  }
-  // try base64 decode then parse
-  try {
-    const decoded = Buffer.from(str, 'base64').toString('utf8');
-    if (decoded.startsWith('{') || decoded.startsWith('[')) {
-      try { return JSON.parse(decoded); } catch (e) { /* fallthrough */ }
-    }
-  } catch (e) { /* not base64 */ }
-  return null;
-}
-
-const parseEmbeddingObject = (raw) => {
-  try {
-    let obj = raw;
-    if (typeof raw === 'string') {
-      const parsed = tryParsePossiblyBase64(raw);
-      if (parsed) obj = parsed;
-      else {
-        // last resort: attempt JSON.parse and capture error
-        try { obj = JSON.parse(raw); } catch (err) { /* keep raw */ }
-      }
-    }
-    if (!obj) return [];
-    // New schema: { _schema:"simple-emb:v1", vectorLength, steps: {step: number[]} }
-    if (obj.steps && typeof obj.steps === 'object') {
-      return Object.values(obj.steps).filter(isNumberArray).map(normalize);
-    }
-    // Legacy schema: object with step keys on top-level
-    const legacySteps = ['look_center','blink','look_left','look_right','smile'];
-    const legacy = legacySteps.map(k => obj[k]).filter(isNumberArray).map(normalize);
-    if (legacy.length) return legacy;
-    // If it's a single array
-    if (isNumberArray(obj)) return [normalize(obj)];
-    return [];
-  } catch (_e) {
-    return [];
-  }
-};
-
-const pickBestSimilarity = (storedVectors, probeVector) => {
-  if (!storedVectors.length || !isNumberArray(probeVector)) return 0;
-  const p = normalize(probeVector);
-  let best = 0;
-  for (const s of storedVectors) best = Math.max(best, cosine(s, p));
-  return best;
-};
-
-// ---------- Attendance helpers (existing) ----------
 const markAbsentStudents = async (classDetails) => {
   try {
     const today = moment().tz('Asia/Kolkata').startOf('day');
@@ -105,187 +30,74 @@ const markAbsentStudents = async (classDetails) => {
   } catch (error) { console.error('Error in markAbsentStudents:', error); }
 };
 
-// ---------- Face verification helpers ----------
 const verifyFaceEmbedding = (storedEmbedding, currentEmbedding) => {
   try {
-    const storedVectors = parseEmbeddingObject(storedEmbedding);
-    // currentEmbedding may be object with steps, a single array, or a string
-    let currentObj = currentEmbedding;
-    if (typeof currentEmbedding === 'string') {
-      const parsed = tryParsePossiblyBase64(currentEmbedding);
-      if (parsed) currentObj = parsed;
-      else {
-        try { currentObj = JSON.parse(currentEmbedding); } catch (e) { /* leave as string */ }
-      }
-    }
-    // current can be a single vector or object with {vector} or {steps:{}}
-    let probeVector = null;
-    if (Array.isArray(currentObj) && isNumberArray(currentObj)) probeVector = currentObj;
-    else if (currentObj?.vector && isNumberArray(currentObj.vector)) probeVector = currentObj.vector;
-    else if (currentObj?.steps) {
-      const vs = Object.values(currentObj.steps).filter(isNumberArray);
-      if (vs.length) {
-        const m = vs[0].map((_, i) => (vs.reduce((s, v) => s + (v[i] || 0), 0) / vs.length));
-        probeVector = m;
-      }
-    } else {
-      // legacy: direct step keys
-      const legacySteps = ['look_center','blink','look_left','look_right','smile']
-        .map(k => currentObj?.[k]).filter(isNumberArray);
-      if (legacySteps.length) {
-        const m = legacySteps[0].map((_, i) => (legacySteps.reduce((s, v) => s + (v[i] || 0), 0) / legacySteps.length));
-        probeVector = m;
-      }
-    }
-
-    if (!storedVectors.length || !probeVector) {
-      return { isValid: false, similarity: 0, error: 'Invalid or missing embeddings' };
-    }
-
-    const similarity = pickBestSimilarity(storedVectors, probeVector);
-    const VERIFICATION_THRESHOLD = 0.78;
-    return {
-      isValid: similarity >= VERIFICATION_THRESHOLD,
-      similarity: Math.round(similarity * 1000) / 1000,
-      threshold: VERIFICATION_THRESHOLD
-    };
+    if (!storedEmbedding || !currentEmbedding) return { isValid: false, similarity: 0, error: 'Missing embedding data' };
+    const storedSteps = storedEmbedding.split('|');
+    let maxSimilarity = 0;
+    storedSteps.forEach(stepEmbedding => {
+      let matches = 0;
+      const minLength = Math.min(stepEmbedding.length, currentEmbedding.length);
+      for (let i = 0; i < minLength; i++) if (stepEmbedding[i] === currentEmbedding[i]) matches++;
+      const similarity = matches / Math.max(stepEmbedding.length, currentEmbedding.length);
+      maxSimilarity = Math.max(maxSimilarity, similarity);
+    });
+    const VERIFICATION_THRESHOLD = 0.15;
+    return { isValid: maxSimilarity >= VERIFICATION_THRESHOLD, similarity: Math.round(maxSimilarity * 100) / 100, threshold: VERIFICATION_THRESHOLD };
   } catch (error) {
     console.error('Face verification comparison error:', error);
     return { isValid: false, similarity: 0, error: error.message };
   }
 };
 
-// ---------- Controllers (with safer enrollment parsing) ----------
 exports.enrollFace = async (req, res) => {
   try {
-    const { rollNumber } = req.body;
-    // faceEmbedding may be provided under multiple keys for backward compatibility
-    const faceEmbeddingRaw = req.body.faceEmbedding ?? req.body.embeddings ?? req.body.embeddingsJson ?? null;
-    const livenessSteps = req.body.livenessSteps ?? req.body.steps ?? null;
-    const enrollmentTimestamp = req.body.enrollmentTimestamp ?? Date.now();
-
-    if (!rollNumber || !faceEmbeddingRaw) {
-      return res.status(400).json({ success: false, message: 'Roll number and face embedding are required' });
-    }
-
-    // Attempt to parse the embedding payload safely (handles JSON or base64-encoded JSON)
-    let parsedEmbedding = null;
-    if (typeof faceEmbeddingRaw === 'object') parsedEmbedding = faceEmbeddingRaw;
-    else if (typeof faceEmbeddingRaw === 'string') parsedEmbedding = tryParsePossiblyBase64(faceEmbeddingRaw) ?? (() => {
-      try { return JSON.parse(faceEmbeddingRaw); } catch (e) { return null; }
-    })();
-
-    if (!parsedEmbedding) {
-      console.error('Enrollment failed: unable to parse faceEmbedding payload. Raw payload excerpt:', String(faceEmbeddingRaw).slice(0, 200));
-      return res.status(400).json({ success: false, message: 'Could not parse faceEmbedding payload. Ensure you send a JSON object (or base64-encoded JSON).' });
-    }
-
-    const vectors = parseEmbeddingObject(parsedEmbedding);
-    if (!vectors.length) {
-      console.error('Enrollment failed: parsed embedding did not contain valid vectors. Parsed object keys:', Object.keys(parsedEmbedding || {}));
-      return res.status(400).json({ success: false, message: 'Invalid embedding format: expected per-step numeric arrays.' });
-    }
-
+    const { rollNumber, faceEmbedding, verificationHash, livenessSteps, enrollmentTimestamp } = req.body;
+    if (!rollNumber || !faceEmbedding) return res.status(400).json({ success: false, message: 'Roll number and face embedding are required' });
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
-
-    // Save a consistent JSON representation
-    student.faceEmbedding = typeof parsedEmbedding === 'string' ? parsedEmbedding : JSON.stringify(parsedEmbedding);
-    student.faceEnrollmentDate = new Date(enrollmentTimestamp);
-    student.livenessSteps = Array.isArray(livenessSteps) ? livenessSteps : (parsedEmbedding.steps ? Object.keys(parsedEmbedding.steps) : []);
+    student.faceEmbedding = faceEmbedding;
+    student.faceVerificationHash = verificationHash;
+    student.faceEnrollmentDate = new Date(enrollmentTimestamp || Date.now());
+    student.livenessSteps = livenessSteps || [];
     student.faceEnrolled = true;
     await student.save();
-
-    return res.status(200).json({
-      success: true,
-      message: 'Face enrollment completed successfully',
-      data: {
-        rollNumber: student.rollNumber,
-        enrollmentDate: student.faceEnrollmentDate,
-        stepsCompleted: student.livenessSteps.length
-      }
-    });
+    res.status(200).json({ success: true, message: 'Face enrollment completed successfully', data: { rollNumber: student.rollNumber, enrollmentDate: student.faceEnrollmentDate, stepsCompleted: livenessSteps?.length || 0 } });
   } catch (error) {
     console.error('❌ Face enrollment error:', error);
-    return res.status(500).json({ success: false, message: 'Face enrollment failed', error: error.message });
+    res.status(500).json({ success: false, message: 'Face enrollment failed', error: error.message });
   }
 };
 
 exports.verifyFaceAttendance = async (req, res) => {
   try {
     const { rollNumber, faceEmbedding, className, latitude, longitude, beaconProximity, classCode } = req.body;
-    if (!rollNumber || !faceEmbedding || !className || latitude==null || longitude==null || !classCode) {
-      return res.status(400).json({ success: false, message: 'Missing required fields for face verification attendance' });
-    }
-
+    if (!rollNumber || !faceEmbedding || !className || !latitude || !longitude || !classCode) return res.status(400).json({ success: false, message: 'Missing required fields for face verification attendance' });
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
-    if (!student.faceEnrolled || !student.faceEmbedding) {
-      return res.status(400).json({ success: false, message: 'Face enrollment required before using face verification' });
-    }
-
+    if (!student.faceEnrolled || !student.faceEmbedding) return res.status(400).json({ success: false, message: 'Face enrollment required before using face verification' });
     const classDetails = await CreateClass.findOne({ classCode });
     if (!classDetails) return res.status(404).json({ success: false, message: 'Class not found' });
-
-    // Face verification
     const verificationResult = verifyFaceEmbedding(student.faceEmbedding, faceEmbedding);
-    if (!verificationResult.isValid) {
-      return res.status(403).json({
-        success: false,
-        message: 'Face verification failed. Please try again or use manual check-in.',
-        similarity: verificationResult.similarity,
-        required: verificationResult.threshold
-      });
-    }
-
-    // Geo + beacon checks (existing)
+    if (!verificationResult.isValid) return res.status(403).json({ success: false, message: 'Face verification failed. Please try again or use manual check-in.', similarity: verificationResult.similarity, required: verificationResult.threshold });
     const geoData = await AddClass.findOne({ className: new RegExp(`^${className}$`, 'i') });
     if (!geoData) return res.status(404).json({ success: false, message: 'Class location data not found' });
-
-    const userLocation = { latitude: Number(latitude), longitude: Number(longitude) };
+    const userLocation = { latitude, longitude };
     const classLocation = { latitude: geoData.latitude, longitude: geoData.longitude };
     const distance = haversine(userLocation, classLocation);
-    if (distance > geoData.radius) {
-      return res.status(403).json({ success: false, message: 'You are not within the class area', distance: Math.round(distance), allowedRadius: geoData.radius });
-    }
-
-    const expectedBeaconId = geoData?.beaconId ? String(geoData.beaconId).trim().toLowerCase() : null;
-    const receivedBeaconId = beaconProximity?.beaconId ? String(beaconProximity.beaconId).trim().toLowerCase() : null;
-    if (expectedBeaconId && (!receivedBeaconId || receivedBeaconId !== expectedBeaconId)) {
-      return res.status(403).json({ success: false, message: 'Required beacon not detected or out of range', expectedBeaconId: geoData?.beaconId, receivedBeaconId: beaconProximity?.beaconId });
-    }
-
-    // Time window checks (existing)
+    if (distance > geoData.radius) return res.status(403).json({ success: false, message: 'You are not within the class area', distance: Math.round(distance), allowedRadius: geoData.radius });
+    const expectedBeaconId = geoData?.beaconId ? geoData.beaconId.trim().toLowerCase() : null;
+    const receivedBeaconId = beaconProximity?.beaconId ? beaconProximity.beaconId.trim().toLowerCase() : null;
+    if (expectedBeaconId && (!receivedBeaconId || receivedBeaconId !== expectedBeaconId)) return res.status(403).json({ success: false, message: 'Required beacon not detected or out of range', expectedBeaconId: geoData?.beaconId, receivedBeaconId: beaconProximity?.beaconId });
     const now = moment().tz('Asia/Kolkata');
     const classDate = moment.tz(`${classDetails.date} ${classDetails.startTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
     const classEndDate = moment.tz(`${classDetails.date} ${classDetails.endTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
     const attendanceWindowEnd = moment(classDate).add(15, 'minutes');
-
-    if (now.isAfter(classEndDate)) {
-      return res.status(403).json({ success: false, message: 'Class has already ended' });
-    }
-
-    const existingAttendance = await Attendance.findOne({
-      rollNumber,
-      className: classDetails.className,
-      subject: classDetails.subject,
-      time: { $gte: moment(classDate).startOf('day').toDate(), $lt: moment(classDate).endOf('day').toDate() }
-    });
-
-    const attendanceData = {
-      rollNumber,
-      classId: classDetails._id,
-      className: classDetails.className,
-      subject: classDetails.subject,
-      classCode: classDetails.classCode,
-      status: 'Present',
-      time: now.toDate(),
-      verificationMethod: 'face',
-      faceVerificationScore: verificationResult.similarity
-    };
-
+    if (now.isAfter(classEndDate)) return res.status(403).json({ success: false, message: 'Class has already ended' });
+    const existingAttendance = await Attendance.findOne({ rollNumber, className: classDetails.className, subject: classDetails.subject, time: { $gte: moment(classDate).startOf('day').toDate(), $lt: moment(classDate).endOf('day').toDate() } });
+    if (existingAttendance && existingAttendance.status === 'Present') return res.status(400).json({ success: false, message: 'Attendance already marked for this class' });
+    const attendanceData = { rollNumber, classId: classDetails._id, className: classDetails.className, subject: classDetails.subject, classCode: classDetails.classCode, status: 'Present', time: now.toDate(), verificationMethod: 'face', faceVerificationScore: verificationResult.similarity };
     if (now.isAfter(attendanceWindowEnd)) attendanceData.lateSubmission = true;
-
     let attendance;
     if (existingAttendance) {
       Object.assign(existingAttendance, attendanceData);
@@ -295,25 +107,13 @@ exports.verifyFaceAttendance = async (req, res) => {
       attendance = new Attendance(attendanceData);
       await attendance.save();
     }
-
-    return res.status(200).json({
-      success: true,
-      message: `Attendance marked successfully using face verification${attendanceData.lateSubmission ? ' (Late)' : ''}`,
-      data: {
-        className: classDetails.className,
-        subject: classDetails.subject,
-        verificationScore: verificationResult.similarity,
-        timestamp: attendance.time,
-        lateSubmission: attendanceData.lateSubmission || false
-      }
-    });
+    res.status(200).json({ success: true, message: `Attendance marked successfully using face verification${attendanceData.lateSubmission ? ' (Late)' : ''}`, data: { className: classDetails.className, subject: classDetails.subject, verificationScore: verificationResult.similarity, timestamp: attendance.time, lateSubmission: attendanceData.lateSubmission || false } });
   } catch (error) {
     console.error('❌ Face verification attendance error:', error);
-    return res.status(500).json({ success: false, message: 'Face verification attendance failed', error: error.message });
+    res.status(500).json({ success: false, message: 'Face verification attendance failed', error: error.message });
   }
 };
 
-// --------- Other existing controllers unchanged (fetchNotifications, submitAttendance, history, status, reset) ---------
 exports.fetchNotifications = async (req, res) => {
   try {
     const { rollNumber } = req.params;
@@ -356,16 +156,17 @@ exports.submitAttendance = async (req, res) => {
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ message: 'Student not found' });
     const now = moment().tz('Asia/Kolkata');
+    const today = now.format('YYYY-MM-DD');
     const classDetails = await CreateClass.findOne({ classCode });
     if (!classDetails) return res.status(404).json({ message: 'No matching class found for today' });
     const geoData = await AddClass.findOne({ className: new RegExp(`^${className}$`, 'i') });
     if (!geoData) return res.status(404).json({ message: 'Class location data not found' });
-    const userLocation = { latitude: Number(latitude), longitude: Number(longitude) };
+    const userLocation = { latitude, longitude };
     const classLocation = { latitude: geoData.latitude, longitude: geoData.longitude };
     const distance = haversine(userLocation, classLocation);
     if (distance > geoData.radius) return res.status(403).json({ message: 'You are not within the class area', distance: Math.round(distance), allowedRadius: geoData.radius });
-    const expectedBeaconId = geoData?.beaconId ? String(geoData.beaconId).trim().toLowerCase() : null;
-    const receivedBeaconId = beaconProximity?.beaconId ? String(beaconProximity.beaconId).trim().toLowerCase() : null;
+    const expectedBeaconId = geoData?.beaconId ? geoData.beaconId.trim().toLowerCase() : null;
+    const receivedBeaconId = beaconProximity?.beaconId ? beaconProximity.beaconId.trim().toLowerCase() : null;
     if (expectedBeaconId && (!receivedBeaconId || receivedBeaconId !== expectedBeaconId)) return res.status(403).json({ message: 'Required beacon not detected or out of range', expectedBeaconId: geoData?.beaconId, receivedBeaconId: beaconProximity?.beaconId });
     if (classCode !== classDetails.classCode) return res.status(403).json({ message: 'Invalid class code provided', expected: classDetails.classCode });
     const classDate = moment.tz(`${classDetails.date} ${classDetails.startTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
@@ -439,6 +240,7 @@ exports.resetFaceEnrollment = async (req, res) => {
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
     student.faceEmbedding = null;
+    student.faceVerificationHash = null;
     student.faceEnrollmentDate = null;
     student.livenessSteps = [];
     student.faceEnrolled = false;
