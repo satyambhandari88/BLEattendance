@@ -64,38 +64,55 @@ const verifyFaceEmbedding = (storedEmbedding, currentEmbedding) => {
       };
     }
 
-    // Split stored embedding by steps (from enrollment)
-    const storedSteps = storedEmbedding.split('|');
-    
+    // Parse stored embedding more efficiently
+    const storedSteps = storedEmbedding.split('||');
     let maxSimilarity = 0;
-    
-    // Compare with each enrollment step
-    storedSteps.forEach(stepEmbedding => {
-      let matches = 0;
-      const minLength = Math.min(stepEmbedding.length, currentEmbedding.length);
-      
-      // Character-by-character comparison
-      for (let i = 0; i < minLength; i++) {
-        if (stepEmbedding[i] === currentEmbedding[i]) {
-          matches++;
+    let bestMatch = null;
+
+    storedSteps.forEach((stepData, index) => {
+      try {
+        // Extract features from step data
+        const featureParts = stepData.split('_');
+        if (featureParts.length < 2) return;
+        
+        const action = featureParts[0];
+        const features = featureParts[1].split('|').map(f => parseFloat(f)).filter(f => !isNaN(f));
+        
+        if (features.length === 0) return;
+
+        // Parse current embedding
+        const currentFeatures = currentEmbedding.split('|').map(f => parseFloat(f)).filter(f => !isNaN(f));
+        
+        if (currentFeatures.length === 0) return;
+
+        // Calculate cosine similarity
+        const similarity = calculateCosineSimilarity(features, currentFeatures);
+        
+        if (similarity > maxSimilarity) {
+          maxSimilarity = similarity;
+          bestMatch = { action, similarity, step: index };
         }
+      } catch (err) {
+        console.warn(`Error processing step ${index}:`, err);
       }
-      
-      const similarity = matches / Math.max(stepEmbedding.length, currentEmbedding.length);
-      maxSimilarity = Math.max(maxSimilarity, similarity);
     });
-    
-    // Verification threshold - adjustable based on security needs
-    const VERIFICATION_THRESHOLD = 0.15; // 15% similarity required
-    
+
+    // Dynamic threshold based on data quality
+    let threshold = 0.3; // Base threshold
+    if (storedSteps.length >= 3) threshold = 0.35; // Higher threshold for more data
+    if (storedSteps.length >= 5) threshold = 0.4; // Even higher for complete enrollment
+
+    console.log(`Face verification: similarity=${maxSimilarity.toFixed(3)}, threshold=${threshold}, match=${bestMatch?.action || 'none'}`);
+
     return {
-      isValid: maxSimilarity >= VERIFICATION_THRESHOLD,
-      similarity: Math.round(maxSimilarity * 100) / 100,
-      threshold: VERIFICATION_THRESHOLD
+      isValid: maxSimilarity >= threshold,
+      similarity: Math.round(maxSimilarity * 1000) / 1000,
+      threshold,
+      bestMatch
     };
     
   } catch (error) {
-    console.error('Face verification comparison error:', error);
+    console.error('Face verification error:', error);
     return {
       isValid: false,
       similarity: 0,
@@ -104,18 +121,41 @@ const verifyFaceEmbedding = (storedEmbedding, currentEmbedding) => {
   }
 };
 
-// Face enrollment endpoint
+// Helper function for cosine similarity
+const calculateCosineSimilarity = (features1, features2) => {
+  const minLength = Math.min(features1.length, features2.length);
+  if (minLength === 0) return 0;
+
+  let dotProduct = 0;
+  let norm1 = 0;
+  let norm2 = 0;
+
+  for (let i = 0; i < minLength; i++) {
+    const f1 = features1[i] || 0;
+    const f2 = features2[i] || 0;
+    
+    dotProduct += f1 * f2;
+    norm1 += f1 * f1;
+    norm2 += f2 * f2;
+  }
+
+  if (norm1 === 0 || norm2 === 0) return 0;
+  
+  const similarity = dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
+  return Math.max(0, Math.min(1, similarity));
+};
+
+// UPDATED: Enhanced face enrollment with better data structure
 exports.enrollFace = async (req, res) => {
   try {
     console.log('🔵 Face enrollment request received:', {
       rollNumber: req.body.rollNumber,
       hasEmbedding: !!req.body.faceEmbedding,
-      stepsCount: req.body.livenessSteps?.length || 0
+      dataLength: req.body.faceEmbedding?.length || 0
     });
     
-    const { rollNumber, faceEmbedding, verificationHash, livenessSteps, enrollmentTimestamp } = req.body;
+    const { rollNumber, faceEmbedding, steps, timestamp } = req.body;
 
-    // Validate required fields
     if (!rollNumber || !faceEmbedding) {
       return res.status(400).json({ 
         success: false,
@@ -123,7 +163,6 @@ exports.enrollFace = async (req, res) => {
       });
     }
 
-    // Find student
     const student = await Student.findOne({ rollNumber });
     if (!student) {
       return res.status(404).json({ 
@@ -132,12 +171,22 @@ exports.enrollFace = async (req, res) => {
       });
     }
 
-    // Update student record with face data
+    // Validate embedding format
+    if (typeof faceEmbedding !== 'string' || faceEmbedding.length < 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid face embedding format'
+      });
+    }
+
+    // Update student record with optimized storage
     student.faceEmbedding = faceEmbedding;
-    student.faceVerificationHash = verificationHash;
-    student.faceEnrollmentDate = new Date(enrollmentTimestamp || Date.now());
-    student.livenessSteps = livenessSteps || [];
+    student.faceEnrollmentDate = new Date(timestamp || Date.now());
     student.faceEnrolled = true;
+    
+    // Add metadata for verification optimization
+    student.enrollmentSteps = steps || 5;
+    student.enrollmentVersion = '2.1';
     
     await student.save();
 
@@ -149,7 +198,7 @@ exports.enrollFace = async (req, res) => {
       data: {
         rollNumber: student.rollNumber,
         enrollmentDate: student.faceEnrollmentDate,
-        stepsCompleted: livenessSteps?.length || 0
+        version: '2.1'
       }
     });
 
