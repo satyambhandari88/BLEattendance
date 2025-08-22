@@ -5,7 +5,7 @@ const Attendance = require('../models/Attendance');
 const haversine = require('haversine-distance');
 const moment = require('moment-timezone');
 
-// ---------- Embedding helpers ----------
+// ---------- Helpers for embeddings ----------
 const isNumberArray = (arr) => Array.isArray(arr) && arr.every((x) => typeof x === 'number' && isFinite(x));
 const l2norm = (v) => Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
 const normalize = (v) => {
@@ -25,9 +25,35 @@ const cosine = (a, b) => {
   return Math.max(0, Math.min(1, sim));
 };
 
+// Try to parse a string that may be JSON or base64-encoded JSON
+function tryParsePossiblyBase64(str) {
+  if (typeof str !== 'string') return null;
+  str = str.trim();
+  // quick check: looks like JSON already
+  if (str.startsWith('{') || str.startsWith('[')) {
+    try { return JSON.parse(str); } catch (e) { /* fallthrough */ }
+  }
+  // try base64 decode then parse
+  try {
+    const decoded = Buffer.from(str, 'base64').toString('utf8');
+    if (decoded.startsWith('{') || decoded.startsWith('[')) {
+      try { return JSON.parse(decoded); } catch (e) { /* fallthrough */ }
+    }
+  } catch (e) { /* not base64 */ }
+  return null;
+}
+
 const parseEmbeddingObject = (raw) => {
   try {
-    const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    let obj = raw;
+    if (typeof raw === 'string') {
+      const parsed = tryParsePossiblyBase64(raw);
+      if (parsed) obj = parsed;
+      else {
+        // last resort: attempt JSON.parse and capture error
+        try { obj = JSON.parse(raw); } catch (err) { /* keep raw */ }
+      }
+    }
     if (!obj) return [];
     // New schema: { _schema:"simple-emb:v1", vectorLength, steps: {step: number[]} }
     if (obj.steps && typeof obj.steps === 'object') {
@@ -41,7 +67,6 @@ const parseEmbeddingObject = (raw) => {
     if (isNumberArray(obj)) return [normalize(obj)];
     return [];
   } catch (_e) {
-    // Could be pipe-joined strings etc: ignore; no valid embedding
     return [];
   }
 };
@@ -80,25 +105,31 @@ const markAbsentStudents = async (classDetails) => {
   } catch (error) { console.error('Error in markAbsentStudents:', error); }
 };
 
-// ---------- Face verification ----------
+// ---------- Face verification helpers ----------
 const verifyFaceEmbedding = (storedEmbedding, currentEmbedding) => {
   try {
     const storedVectors = parseEmbeddingObject(storedEmbedding);
-    const currentObj = typeof currentEmbedding === 'string' ? JSON.parse(currentEmbedding) : currentEmbedding;
+    // currentEmbedding may be object with steps, a single array, or a string
+    let currentObj = currentEmbedding;
+    if (typeof currentEmbedding === 'string') {
+      const parsed = tryParsePossiblyBase64(currentEmbedding);
+      if (parsed) currentObj = parsed;
+      else {
+        try { currentObj = JSON.parse(currentEmbedding); } catch (e) { /* leave as string */ }
+      }
+    }
     // current can be a single vector or object with {vector} or {steps:{}}
     let probeVector = null;
     if (Array.isArray(currentObj) && isNumberArray(currentObj)) probeVector = currentObj;
     else if (currentObj?.vector && isNumberArray(currentObj.vector)) probeVector = currentObj.vector;
     else if (currentObj?.steps) {
-      // average all provided steps into a single probe
       const vs = Object.values(currentObj.steps).filter(isNumberArray);
       if (vs.length) {
         const m = vs[0].map((_, i) => (vs.reduce((s, v) => s + (v[i] || 0), 0) / vs.length));
         probeVector = m;
       }
-    }
-    // If still null and legacy: try direct keys
-    if (!probeVector) {
+    } else {
+      // legacy: direct step keys
       const legacySteps = ['look_center','blink','look_left','look_right','smile']
         .map(k => currentObj?.[k]).filter(isNumberArray);
       if (legacySteps.length) {
@@ -112,7 +143,7 @@ const verifyFaceEmbedding = (storedEmbedding, currentEmbedding) => {
     }
 
     const similarity = pickBestSimilarity(storedVectors, probeVector);
-    const VERIFICATION_THRESHOLD = 0.78; // same as client
+    const VERIFICATION_THRESHOLD = 0.78;
     return {
       isValid: similarity >= VERIFICATION_THRESHOLD,
       similarity: Math.round(similarity * 1000) / 1000,
@@ -124,29 +155,48 @@ const verifyFaceEmbedding = (storedEmbedding, currentEmbedding) => {
   }
 };
 
-// ---------- Controllers ----------
+// ---------- Controllers (with safer enrollment parsing) ----------
 exports.enrollFace = async (req, res) => {
   try {
-    const { rollNumber, faceEmbedding, livenessSteps, enrollmentTimestamp } = req.body;
-    if (!rollNumber || !faceEmbedding) {
+    const { rollNumber } = req.body;
+    // faceEmbedding may be provided under multiple keys for backward compatibility
+    const faceEmbeddingRaw = req.body.faceEmbedding ?? req.body.embeddings ?? req.body.embeddingsJson ?? null;
+    const livenessSteps = req.body.livenessSteps ?? req.body.steps ?? null;
+    const enrollmentTimestamp = req.body.enrollmentTimestamp ?? Date.now();
+
+    if (!rollNumber || !faceEmbeddingRaw) {
       return res.status(400).json({ success: false, message: 'Roll number and face embedding are required' });
     }
+
+    // Attempt to parse the embedding payload safely (handles JSON or base64-encoded JSON)
+    let parsedEmbedding = null;
+    if (typeof faceEmbeddingRaw === 'object') parsedEmbedding = faceEmbeddingRaw;
+    else if (typeof faceEmbeddingRaw === 'string') parsedEmbedding = tryParsePossiblyBase64(faceEmbeddingRaw) ?? (() => {
+      try { return JSON.parse(faceEmbeddingRaw); } catch (e) { return null; }
+    })();
+
+    if (!parsedEmbedding) {
+      console.error('Enrollment failed: unable to parse faceEmbedding payload. Raw payload excerpt:', String(faceEmbeddingRaw).slice(0, 200));
+      return res.status(400).json({ success: false, message: 'Could not parse faceEmbedding payload. Ensure you send a JSON object (or base64-encoded JSON).' });
+    }
+
+    const vectors = parseEmbeddingObject(parsedEmbedding);
+    if (!vectors.length) {
+      console.error('Enrollment failed: parsed embedding did not contain valid vectors. Parsed object keys:', Object.keys(parsedEmbedding || {}));
+      return res.status(400).json({ success: false, message: 'Invalid embedding format: expected per-step numeric arrays.' });
+    }
+
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
 
-    // Validate embedding schema before save
-    const vectors = parseEmbeddingObject(faceEmbedding);
-    if (!vectors.length) {
-      return res.status(400).json({ success: false, message: 'Invalid embedding format' });
-    }
-
-    student.faceEmbedding = typeof faceEmbedding === 'string' ? faceEmbedding : JSON.stringify(faceEmbedding);
-    student.faceEnrollmentDate = new Date(enrollmentTimestamp || Date.now());
-    student.livenessSteps = Array.isArray(livenessSteps) ? livenessSteps : [];
+    // Save a consistent JSON representation
+    student.faceEmbedding = typeof parsedEmbedding === 'string' ? parsedEmbedding : JSON.stringify(parsedEmbedding);
+    student.faceEnrollmentDate = new Date(enrollmentTimestamp);
+    student.livenessSteps = Array.isArray(livenessSteps) ? livenessSteps : (parsedEmbedding.steps ? Object.keys(parsedEmbedding.steps) : []);
     student.faceEnrolled = true;
     await student.save();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: 'Face enrollment completed successfully',
       data: {
@@ -157,7 +207,7 @@ exports.enrollFace = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Face enrollment error:', error);
-    res.status(500).json({ success: false, message: 'Face enrollment failed', error: error.message });
+    return res.status(500).json({ success: false, message: 'Face enrollment failed', error: error.message });
   }
 };
 
@@ -246,7 +296,7 @@ exports.verifyFaceAttendance = async (req, res) => {
       await attendance.save();
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: `Attendance marked successfully using face verification${attendanceData.lateSubmission ? ' (Late)' : ''}`,
       data: {
@@ -259,7 +309,7 @@ exports.verifyFaceAttendance = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Face verification attendance error:', error);
-    res.status(500).json({ success: false, message: 'Face verification attendance failed', error: error.message });
+    return res.status(500).json({ success: false, message: 'Face verification attendance failed', error: error.message });
   }
 };
 
