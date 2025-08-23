@@ -629,3 +629,71 @@ exports.resetFaceEnrollment = async (req, res) => {
     res.status(500).json({ success: false, message: 'Error resetting enrollment' });
   }
 };
+
+
+
+
+
+exports.verifyFaceOnly = async (req, res) => {
+  try {
+    const { rollNumber, faceDescriptor, faceEmbedding } = req.body;
+
+    if (!rollNumber) {
+      return res.status(400).json({ success: false, message: 'Roll number is required' });
+    }
+    if (!faceDescriptor && !faceEmbedding) {
+      return res.status(400).json({ success: false, message: 'Provide faceDescriptor or faceEmbedding' });
+    }
+
+    const student = await Student.findOne({ rollNumber });
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student not found' });
+    }
+
+    if (!student.faceEnrolled || (!student.faceDescriptors && !student.faceEmbedding)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Face enrollment required before verification' 
+      });
+    }
+
+    // Face verification using existing unified function
+    const verification = unifiedVerifyFace(student, { faceDescriptor, faceEmbedding });
+    
+    if (!verification.isValid) {
+      return res.status(403).json({
+        success: false,
+        message: verification.method === 'descriptor'
+          ? `Face verification failed. Confidence: ${verification.confidence}% (required ~40%+).`
+          : 'Face verification failed. Please try again.',
+        confidence: verification.confidence,
+        method: verification.method,
+        threshold: verification.threshold,
+        error: verification.error,
+      });
+    }
+
+    // Success response
+    res.status(200).json({
+      success: true,
+      message: 'Face verification successful',
+      confidence: verification.confidence,
+      method: verification.method,
+      data: {
+        rollNumber: student.rollNumber,
+        confidence: verification.confidence,
+        method: verification.method,
+        distance: verification.distance || verification.similarity
+      }
+    });
+
+  } catch (error) {
+    console.error('Face-only verification error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Face verification failed', 
+      error: error.message 
+    });
+  }
+};
+
