@@ -18,6 +18,7 @@ router.post('/enroll-face', studentController.enrollFace);
 router.post('/verify-face-attendance', studentController.verifyFaceAttendance);
 router.get('/face-status/:rollNumber', studentController.getFaceEnrollmentStatus);
 router.post('/reset-face-enrollment', studentController.resetFaceEnrollment);
+router.post('/verify-face-only', studentController.verifyFaceOnly);
 
 // New routes for enhanced face recognition
 router.get('/face-models/status', (req, res) => {
