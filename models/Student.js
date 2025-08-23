@@ -9,7 +9,57 @@ const StudentSchema = new mongoose.Schema({
   department: { type: String, required: true },
   deviceId: { type: String, default: null },
   year: { type: Number, required: true },
+  
+  // Face recognition data using face-api.js
+  faceDescriptors: [{ 
+    type: [Number], // Array of 128 floating point numbers from face-api.js
+    validate: {
+      validator: function(v) {
+        return Array.isArray(v) && v.length === 128 && v.every(num => typeof num === 'number');
+      },
+      message: 'Face descriptor must be an array of 128 numbers'
+    }
+  }],
+  
+  faceDetectionData: {
+    confidence: { type: Number, default: 0 },
+    landmarks: { type: mongoose.Schema.Types.Mixed },
+    expressions: { type: mongoose.Schema.Types.Mixed },
+    ageGender: { type: mongoose.Schema.Types.Mixed }
+  },
+  
+  faceEnrolled: { type: Boolean, default: false },
+  faceEnrollmentDate: { type: Date, default: null },
+  
+  // Deprecated - keeping for backward compatibility
   faceData: { type: String }
 }, { timestamps: true });
+
+// Hash password before saving
+StudentSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
+  this.password = await bcrypt.hash(this.password, 10);
+  next();
+});
+
+// Compare password method
+StudentSchema.methods.comparePassword = async function(candidatePassword) {
+  return bcrypt.compare(candidatePassword, this.password);
+};
+
+// Check if face is enrolled
+StudentSchema.methods.isFaceEnrolled = function() {
+  return this.faceEnrolled && this.faceDescriptors && this.faceDescriptors.length > 0;
+};
+
+// Get face enrollment status
+StudentSchema.methods.getFaceStatus = function() {
+  return {
+    enrolled: this.faceEnrolled || false,
+    enrollmentDate: this.faceEnrollmentDate,
+    descriptorCount: this.faceDescriptors ? this.faceDescriptors.length : 0,
+    hasDetectionData: !!this.faceDetectionData
+  };
+};
 
 module.exports = mongoose.model('Student', StudentSchema);
