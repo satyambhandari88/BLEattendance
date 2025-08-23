@@ -1,3 +1,5 @@
+// controllers/studentController.js
+
 const AddClass = require('../models/AddClass');
 const CreateClass = require('../models/CreateClass');
 const Student = require('../models/Student');
@@ -5,144 +7,428 @@ const Attendance = require('../models/Attendance');
 const haversine = require('haversine-distance');
 const moment = require('moment-timezone');
 
+/* =========================
+   Helpers (Time + Class)
+========================= */
+const TZ = 'Asia/Kolkata';
+const getClassMoments = (classDetails) => {
+  const classDate = moment.tz(`${classDetails.date} ${classDetails.startTime}`, 'YYYY-MM-DD HH:mm', TZ);
+  const classEndDate = moment.tz(`${classDetails.date} ${classDetails.endTime}`, 'YYYY-MM-DD HH:mm', TZ);
+  const attendanceWindowEnd = moment(classDate).add(15, 'minutes');
+  return { classDate, classEndDate, attendanceWindowEnd };
+};
+
+/* =========================
+   Auto Absent Marker
+========================= */
 const markAbsentStudents = async (classDetails) => {
   try {
-    const today = moment().tz('Asia/Kolkata').startOf('day');
-    const classDate = moment.tz(`${classDetails.date} ${classDetails.startTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
-    const attendanceWindowEnd = moment(classDate).add(15, 'minutes');
-    if (moment().tz('Asia/Kolkata').isAfter(attendanceWindowEnd)) {
-      const students = await Student.find({ year: classDetails.year.toString(), department: classDetails.branch });
+    const todayStart = moment().tz(TZ).startOf('day');
+    const todayEnd = moment(todayStart).endOf('day');
+    const { attendanceWindowEnd } = getClassMoments(classDetails);
+
+    if (moment().tz(TZ).isAfter(attendanceWindowEnd)) {
+      const students = await Student.find({
+        year: classDetails.year.toString(),
+        department: classDetails.branch,
+      });
+
       for (const student of students) {
         const existingAttendance = await Attendance.findOne({
-          rollNumber: student.rollNumber, className: classDetails.className, subject: classDetails.subject,
-          time: { $gte: today.toDate(), $lt: moment(today).endOf('day').toDate() }
+          rollNumber: student.rollNumber,
+          className: classDetails.className,
+          subject: classDetails.subject,
+          time: { $gte: todayStart.toDate(), $lt: todayEnd.toDate() },
         });
+
         if (!existingAttendance) {
-          const absentAttendance = new Attendance({
-            rollNumber: student.rollNumber, classId: classDetails._id, className: classDetails.className,
-            subject: classDetails.subject, classCode: classDetails.classCode, status: 'Absent',
-            time: attendanceWindowEnd.toDate(), autoMarked: true
-          });
-          await absentAttendance.save();
+          await new Attendance({
+            rollNumber: student.rollNumber,
+            classId: classDetails._id,
+            className: classDetails.className,
+            subject: classDetails.subject,
+            classCode: classDetails.classCode,
+            status: 'Absent',
+            time: attendanceWindowEnd.toDate(),
+            autoMarked: true,
+          }).save();
         }
       }
     }
-  } catch (error) { console.error('Error in markAbsentStudents:', error); }
+  } catch (error) {
+    console.error('Error in markAbsentStudents:', error);
+  }
 };
 
-const verifyFaceEmbedding = (storedEmbedding, currentEmbedding) => {
+/* =========================
+   Face Verification Utils
+========================= */
+
+// Euclidean distance for 128-d numeric descriptors
+const calculateEuclideanDistance = (desc1, desc2) => {
+  if (!desc1 || !desc2 || desc1.length !== desc2.length) return 1;
+  let sum = 0;
+  for (let i = 0; i < desc1.length; i++) sum += Math.pow(desc1[i] - desc2[i], 2);
+  return Math.sqrt(sum);
+};
+
+// Verify numeric descriptors (preferred)
+const verifyFaceDescriptor = (storedDescriptor, currentDescriptor, threshold = 0.6) => {
   try {
-    if (!storedEmbedding || !currentEmbedding) return { isValid: false, similarity: 0, error: 'Missing embedding data' };
-    const storedSteps = storedEmbedding.split('|');
+    if (!storedDescriptor || !currentDescriptor)
+      return { isValid: false, distance: 1, confidence: 0, threshold, method: 'descriptor' };
+
+    const storedDescs = Array.isArray(storedDescriptor) ? storedDescriptor : [storedDescriptor];
+    let minDistance = 1;
+
+    for (const desc of storedDescs) {
+      const distance = calculateEuclideanDistance(desc, currentDescriptor);
+      if (distance < minDistance) minDistance = distance;
+    }
+
+    const isValid = minDistance <= threshold;
+    const confidence = Math.max(0, Math.round((1 - minDistance) * 100)); // 0-100
+
+    return { isValid, distance: Math.round(minDistance * 1000) / 1000, confidence, threshold, method: 'descriptor' };
+  } catch (error) {
+    console.error('Face verification (descriptor) error:', error);
+    return { isValid: false, distance: 1, confidence: 0, threshold, method: 'descriptor', error: error.message };
+  }
+};
+
+// Back-compat “string embedding” similarity (max char match ratio)
+const verifyFaceEmbedding = (storedEmbedding, currentEmbedding, threshold = 0.15) => {
+  try {
+    if (!storedEmbedding || !currentEmbedding)
+      return { isValid: false, similarity: 0, confidence: 0, threshold, method: 'embedding' };
+
+    const storedSteps = String(storedEmbedding).split('|');
     let maxSimilarity = 0;
-    storedSteps.forEach(stepEmbedding => {
+
+    for (const stepEmbedding of storedSteps) {
       let matches = 0;
       const minLength = Math.min(stepEmbedding.length, currentEmbedding.length);
       for (let i = 0; i < minLength; i++) if (stepEmbedding[i] === currentEmbedding[i]) matches++;
       const similarity = matches / Math.max(stepEmbedding.length, currentEmbedding.length);
-      maxSimilarity = Math.max(maxSimilarity, similarity);
-    });
-    const VERIFICATION_THRESHOLD = 0.15;
-    return { isValid: maxSimilarity >= VERIFICATION_THRESHOLD, similarity: Math.round(maxSimilarity * 100) / 100, threshold: VERIFICATION_THRESHOLD };
+      if (similarity > maxSimilarity) maxSimilarity = similarity;
+    }
+
+    const isValid = maxSimilarity >= threshold;
+    const confidence = Math.round(maxSimilarity * 100); // map to 0-100
+
+    return {
+      isValid,
+      similarity: Math.round(maxSimilarity * 100) / 100,
+      confidence,
+      threshold,
+      method: 'embedding',
+    };
   } catch (error) {
-    console.error('Face verification comparison error:', error);
-    return { isValid: false, similarity: 0, error: error.message };
+    console.error('Face verification (embedding) error:', error);
+    return { isValid: false, similarity: 0, confidence: 0, threshold, method: 'embedding', error: error.message };
   }
 };
 
+// Unified verify that supports both storage formats.
+// Priority: descriptors (if both provided).
+const unifiedVerifyFace = (student, body) => {
+  // 1) Numeric descriptors preferred
+  if (student?.faceDescriptors?.length && Array.isArray(body?.faceDescriptor)) {
+    return verifyFaceDescriptor(student.faceDescriptors, body.faceDescriptor);
+  }
+  // 2) Back-compat string embeddings
+  if (student?.faceEmbedding && body?.faceEmbedding) {
+    return verifyFaceEmbedding(student.faceEmbedding, body.faceEmbedding);
+  }
+  // 3) If only one side is present, try to be helpful
+  if (student?.faceDescriptors?.length) {
+    return { isValid: false, confidence: 0, method: 'descriptor', error: 'Current numeric faceDescriptor missing' };
+  }
+  if (student?.faceEmbedding) {
+    return { isValid: false, confidence: 0, method: 'embedding', error: 'Current faceEmbedding missing' };
+  }
+  return { isValid: false, confidence: 0, error: 'No enrolled face data found' };
+};
+
+/* =========================
+   Controllers
+========================= */
+
 exports.enrollFace = async (req, res) => {
   try {
-    const { rollNumber, faceEmbedding, verificationHash, livenessSteps, enrollmentTimestamp } = req.body;
-    if (!rollNumber || !faceEmbedding) return res.status(400).json({ success: false, message: 'Roll number and face embedding are required' });
+    const {
+      rollNumber,
+
+      // New recommended (numeric descriptors)
+      faceDescriptors,
+      detectionData,
+
+      // Back-compat (string)
+      faceEmbedding,
+      verificationHash,
+      livenessSteps,
+      enrollmentTimestamp,
+    } = req.body;
+
+    if (!rollNumber) {
+      return res.status(400).json({ success: false, message: 'Roll number is required' });
+    }
+
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
-    student.faceEmbedding = faceEmbedding;
-    student.faceVerificationHash = verificationHash;
+
+    // Save numeric descriptors if provided and valid
+    let descriptorCount = 0;
+    if (Array.isArray(faceDescriptors) && faceDescriptors.length > 0) {
+      const validDescriptors = faceDescriptors.filter(
+        (desc) => Array.isArray(desc) && desc.length === 128 && desc.every((v) => typeof v === 'number')
+      );
+      if (validDescriptors.length === 0) {
+        return res.status(400).json({ success: false, message: 'Invalid face descriptors provided' });
+      }
+      student.faceDescriptors = validDescriptors;
+      descriptorCount = validDescriptors.length;
+      student.faceDetectionData = detectionData || {};
+    }
+
+    // Save back-compat embedding if provided
+    if (faceEmbedding) {
+      student.faceEmbedding = String(faceEmbedding);
+      student.faceVerificationHash = verificationHash || null;
+      student.livenessSteps = Array.isArray(livenessSteps) ? livenessSteps : student.livenessSteps || [];
+    }
+
+    if (!descriptorCount && !faceEmbedding) {
+      return res.status(400).json({
+        success: false,
+        message: 'Provide either faceDescriptors (preferred) or faceEmbedding',
+      });
+    }
+
     student.faceEnrollmentDate = new Date(enrollmentTimestamp || Date.now());
-    student.livenessSteps = livenessSteps || [];
     student.faceEnrolled = true;
     await student.save();
-    res.status(200).json({ success: true, message: 'Face enrollment completed successfully', data: { rollNumber: student.rollNumber, enrollmentDate: student.faceEnrollmentDate, stepsCompleted: livenessSteps?.length || 0 } });
+
+    res.status(200).json({
+      success: true,
+      message: 'Face enrollment completed successfully',
+      data: {
+        rollNumber: student.rollNumber,
+        enrollmentDate: student.faceEnrollmentDate,
+        descriptorCount,
+        stepsCompleted: student.livenessSteps?.length || 0,
+      },
+    });
   } catch (error) {
-    console.error('❌ Face enrollment error:', error);
+    console.error('Face enrollment error:', error);
     res.status(500).json({ success: false, message: 'Face enrollment failed', error: error.message });
   }
 };
 
 exports.verifyFaceAttendance = async (req, res) => {
   try {
-    const { rollNumber, faceEmbedding, className, latitude, longitude, beaconProximity, classCode } = req.body;
-    if (!rollNumber || !faceEmbedding || !className || !latitude || !longitude || !classCode) return res.status(400).json({ success: false, message: 'Missing required fields for face verification attendance' });
+    const {
+      rollNumber,
+      className,
+      latitude,
+      longitude,
+      beaconProximity,
+      classCode,
+
+      // Either/or inputs supported
+      faceDescriptor, // numeric [128]
+      faceEmbedding,  // back-compat string
+    } = req.body;
+
+    // Field checks
+    if (!rollNumber || !className || !latitude || !longitude || !classCode) {
+      return res.status(400).json({ success: false, message: 'Missing required fields for verification' });
+    }
+    if (!faceDescriptor && !faceEmbedding) {
+      return res.status(400).json({ success: false, message: 'Provide faceDescriptor or faceEmbedding' });
+    }
+
+    // Load records
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
-    if (!student.faceEnrolled || !student.faceEmbedding) return res.status(400).json({ success: false, message: 'Face enrollment required before using face verification' });
+
+    if (!student.faceEnrolled || (!student.faceDescriptors && !student.faceEmbedding)) {
+      return res.status(400).json({ success: false, message: 'Face enrollment required before verification' });
+    }
+
     const classDetails = await CreateClass.findOne({ classCode });
     if (!classDetails) return res.status(404).json({ success: false, message: 'Class not found' });
-    const verificationResult = verifyFaceEmbedding(student.faceEmbedding, faceEmbedding);
-    if (!verificationResult.isValid) return res.status(403).json({ success: false, message: 'Face verification failed. Please try again or use manual check-in.', similarity: verificationResult.similarity, required: verificationResult.threshold });
+
+    // Face verification
+    const verification = unifiedVerifyFace(student, { faceDescriptor, faceEmbedding });
+    if (!verification.isValid) {
+      return res.status(403).json({
+        success: false,
+        message:
+          verification.method === 'descriptor'
+            ? `Face verification failed. Confidence: ${verification.confidence}% (required ~40%+).`
+            : 'Face verification failed. Please try again or use manual check-in.',
+        confidence: verification.confidence,
+        method: verification.method,
+        threshold: verification.threshold,
+        error: verification.error,
+      });
+    }
+
+    // Location + beacon checks
     const geoData = await AddClass.findOne({ className: new RegExp(`^${className}$`, 'i') });
     if (!geoData) return res.status(404).json({ success: false, message: 'Class location data not found' });
-    const userLocation = { latitude, longitude };
-    const classLocation = { latitude: geoData.latitude, longitude: geoData.longitude };
-    const distance = haversine(userLocation, classLocation);
-    if (distance > geoData.radius) return res.status(403).json({ success: false, message: 'You are not within the class area', distance: Math.round(distance), allowedRadius: geoData.radius });
-    const expectedBeaconId = geoData?.beaconId ? geoData.beaconId.trim().toLowerCase() : null;
-    const receivedBeaconId = beaconProximity?.beaconId ? beaconProximity.beaconId.trim().toLowerCase() : null;
-    if (expectedBeaconId && (!receivedBeaconId || receivedBeaconId !== expectedBeaconId)) return res.status(403).json({ success: false, message: 'Required beacon not detected or out of range', expectedBeaconId: geoData?.beaconId, receivedBeaconId: beaconProximity?.beaconId });
-    const now = moment().tz('Asia/Kolkata');
-    const classDate = moment.tz(`${classDetails.date} ${classDetails.startTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
-    const classEndDate = moment.tz(`${classDetails.date} ${classDetails.endTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
-    const attendanceWindowEnd = moment(classDate).add(15, 'minutes');
-    if (now.isAfter(classEndDate)) return res.status(403).json({ success: false, message: 'Class has already ended' });
-    const existingAttendance = await Attendance.findOne({ rollNumber, className: classDetails.className, subject: classDetails.subject, time: { $gte: moment(classDate).startOf('day').toDate(), $lt: moment(classDate).endOf('day').toDate() } });
-    if (existingAttendance && existingAttendance.status === 'Present') return res.status(400).json({ success: false, message: 'Attendance already marked for this class' });
-    const attendanceData = { rollNumber, classId: classDetails._id, className: classDetails.className, subject: classDetails.subject, classCode: classDetails.classCode, status: 'Present', time: now.toDate(), verificationMethod: 'face', faceVerificationScore: verificationResult.similarity };
+
+    const distance = haversine({ latitude, longitude }, { latitude: geoData.latitude, longitude: geoData.longitude });
+    if (distance > geoData.radius) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not within the class area',
+        distance: Math.round(distance),
+        allowedRadius: geoData.radius,
+      });
+    }
+
+    const expectedBeaconId = geoData?.beaconId?.trim()?.toLowerCase();
+    const receivedBeaconId = beaconProximity?.beaconId?.trim()?.toLowerCase();
+    if (expectedBeaconId && receivedBeaconId !== expectedBeaconId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Required beacon not detected',
+        expected: geoData.beaconId,
+      });
+    }
+
+    // Time checks
+    const now = moment().tz(TZ);
+    const { classDate, classEndDate, attendanceWindowEnd } = getClassMoments(classDetails);
+    if (now.isAfter(classEndDate)) return res.status(403).json({ success: false, message: 'Class has ended' });
+
+    // Existing attendance (per class day)
+    const existingAttendance = await Attendance.findOne({
+      rollNumber,
+      className: classDetails.className,
+      subject: classDetails.subject,
+      time: {
+        $gte: moment(classDate).startOf('day').toDate(),
+        $lt: moment(classDate).endOf('day').toDate(),
+      },
+    });
+
+    if (existingAttendance && existingAttendance.status === 'Present') {
+      return res.status(400).json({ success: false, message: 'Attendance already marked' });
+    }
+
+    // Mark as present (update absent if auto-marked)
+    const attendanceData = {
+      rollNumber,
+      classId: classDetails._id,
+      className: classDetails.className,
+      subject: classDetails.subject,
+      classCode: classDetails.classCode,
+      status: 'Present',
+      time: now.toDate(),
+      verificationMethod: 'face',
+      faceConfidence: verification.confidence,            // normalized 0-100
+      faceVerificationScore: verification.confidence,     // keep also for back-compat stats screens
+      verificationType: verification.method,              // 'descriptor' | 'embedding'
+    };
+
     if (now.isAfter(attendanceWindowEnd)) attendanceData.lateSubmission = true;
+
     let attendance;
     if (existingAttendance) {
       Object.assign(existingAttendance, attendanceData);
       existingAttendance.autoMarked = false;
       attendance = await existingAttendance.save();
     } else {
-      attendance = new Attendance(attendanceData);
-      await attendance.save();
+      attendance = await new Attendance(attendanceData).save();
     }
-    res.status(200).json({ success: true, message: `Attendance marked successfully using face verification${attendanceData.lateSubmission ? ' (Late)' : ''}`, data: { className: classDetails.className, subject: classDetails.subject, verificationScore: verificationResult.similarity, timestamp: attendance.time, lateSubmission: attendanceData.lateSubmission || false } });
+
+    res.status(200).json({
+      success: true,
+      message: `Attendance marked successfully${attendanceData.lateSubmission ? ' (Late)' : ''}`,
+      data: {
+        className: classDetails.className,
+        subject: classDetails.subject,
+        confidence: verification.confidence,
+        method: verification.method,
+        lateSubmission: attendanceData.lateSubmission || false,
+      },
+    });
   } catch (error) {
-    console.error('❌ Face verification attendance error:', error);
-    res.status(500).json({ success: false, message: 'Face verification attendance failed', error: error.message });
+    console.error('Face verification attendance error:', error);
+    res.status(500).json({ success: false, message: 'Verification failed', error: error.message });
   }
 };
 
 exports.fetchNotifications = async (req, res) => {
   try {
     const { rollNumber } = req.params;
-    const serverTime = moment().tz('Asia/Kolkata');
-    const formattedDate = serverTime.format('YYYY-MM-DD');
+    const serverTime = moment().tz(TZ);
+
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ message: 'Student not found' });
-    const classes = await CreateClass.find({ year: student.year.toString(), branch: student.department, date: formattedDate }).sort({ startTime: 1 });
-    const notifications = await Promise.all(classes.map(async (classInfo) => {
-      await markAbsentStudents(classInfo);
-      const classDate = moment.tz(`${classInfo.date} ${classInfo.startTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
-      const classEndDate = moment.tz(`${classInfo.date} ${classInfo.endTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
-      const attendanceWindowEnd = moment(classDate).add(15, 'minutes');
-      const existingAttendance = await Attendance.findOne({ rollNumber, className: classInfo.className, subject: classInfo.subject, time: { $gte: moment(classDate).startOf('day').toDate(), $lt: moment(classDate).endOf('day').toDate() } });
-      const minutesUntilStart = classDate.diff(serverTime, 'minutes');
-      const minutesFromStart = serverTime.diff(classDate, 'minutes');
-      const isEnded = serverTime.isAfter(classEndDate);
-      const isAttendanceWindowClosed = serverTime.isAfter(attendanceWindowEnd);
-      let status;
-      if (existingAttendance) status = existingAttendance.status === 'Present' ? 'marked' : 'absent';
-      else if (isAttendanceWindowClosed) status = 'absent';
-      else if (minutesFromStart >= 0 && minutesFromStart <= 15) status = 'active';
-      else if (minutesUntilStart <= 5) status = 'starting_soon';
-      else if (minutesUntilStart > 5) status = 'upcoming';
-      else status = 'absent';
-      return { className: classInfo.className, subject: classInfo.subject, teacherName: classInfo.teacherName, date: classInfo.date, startTime: classInfo.startTime, endTime: classInfo.endTime, day: classInfo.day, classCode: classInfo.classCode, status, minutesUntilStart: Math.max(0, minutesUntilStart), minutesRemaining: status === 'active' ? Math.max(0, 15 - minutesFromStart) : 0, attendanceId: existingAttendance?._id, canMarkLate: status === 'absent' && !isEnded, faceEnrolled: student.faceEnrolled || false, verificationMethod: existingAttendance?.verificationMethod || null };
-    }));
-    const activeNotifications = notifications.filter(n => n.status !== 'expired' && (n.status !== 'absent' || n.canMarkLate));
-    res.status(200).json({ notifications: activeNotifications, serverTime: serverTime.toISOString(), studentInfo: { rollNumber: student.rollNumber, faceEnrolled: student.faceEnrolled || false, faceEnrollmentDate: student.faceEnrollmentDate || null } });
+
+    const classes = await CreateClass.find({
+      year: student.year.toString(),
+      branch: student.department,
+      date: serverTime.format('YYYY-MM-DD'),
+    }).sort({ startTime: 1 });
+
+    const notifications = await Promise.all(
+      classes.map(async (classInfo) => {
+        await markAbsentStudents(classInfo);
+
+        const { classDate, classEndDate, attendanceWindowEnd } = getClassMoments(classInfo);
+        const existingAttendance = await Attendance.findOne({
+          rollNumber,
+          className: classInfo.className,
+          subject: classInfo.subject,
+          time: {
+            $gte: moment(classDate).startOf('day').toDate(),
+            $lt: moment(classDate).endOf('day').toDate(),
+          },
+        });
+
+        const minutesUntilStart = classDate.diff(serverTime, 'minutes');
+        const minutesFromStart = serverTime.diff(classDate, 'minutes');
+        const isEnded = serverTime.isAfter(classEndDate);
+        const isWindowClosed = serverTime.isAfter(attendanceWindowEnd);
+
+        let status = 'upcoming';
+        if (existingAttendance) status = existingAttendance.status === 'Present' ? 'marked' : 'absent';
+        else if (isWindowClosed) status = 'absent';
+        else if (minutesFromStart >= 0 && minutesFromStart <= 15) status = 'active';
+        else if (minutesUntilStart <= 5) status = 'starting_soon';
+
+        return {
+          className: classInfo.className,
+          subject: classInfo.subject,
+          teacherName: classInfo.teacherName,
+          date: classInfo.date,
+          startTime: classInfo.startTime,
+          endTime: classInfo.endTime,
+          classCode: classInfo.classCode,
+          status,
+          minutesUntilStart: Math.max(0, minutesUntilStart),
+          minutesRemaining: status === 'active' ? Math.max(0, 15 - minutesFromStart) : 0,
+          canMarkLate: status === 'absent' && !isEnded,
+          faceEnrolled: student.faceEnrolled || false,
+          verificationMethod: existingAttendance?.verificationMethod || null,
+        };
+      })
+    );
+
+    res.status(200).json({
+      notifications: notifications.filter((n) => n.status !== 'expired' && (n.status !== 'absent' || n.canMarkLate)),
+      serverTime: serverTime.toISOString(),
+      studentInfo: {
+        rollNumber: student.rollNumber,
+        faceEnrolled: student.faceEnrolled || false,
+        faceEnrollmentDate: student.faceEnrollmentDate || null,
+      },
+    });
   } catch (error) {
     console.error('Error fetching notifications:', error);
     res.status(500).json({ message: 'Error fetching notifications' });
@@ -151,48 +437,104 @@ exports.fetchNotifications = async (req, res) => {
 
 exports.submitAttendance = async (req, res) => {
   try {
-    const { rollNumber, className, latitude, longitude, beaconProximity, classCode, useFaceVerification, faceEmbedding } = req.body;
-    if (useFaceVerification && faceEmbedding) return exports.verifyFaceAttendance(req, res);
+    const {
+      rollNumber,
+      className,
+      latitude,
+      longitude,
+      beaconProximity,
+      classCode,
+      useFaceVerification,
+
+      // Either/or if face verification chosen
+      faceDescriptor,
+      faceEmbedding,
+    } = req.body;
+
+    // If using face verification, route to that handler
+    if (useFaceVerification && (faceDescriptor || faceEmbedding)) {
+      return exports.verifyFaceAttendance(req, res);
+    }
+
+    // Manual flow
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ message: 'Student not found' });
-    const now = moment().tz('Asia/Kolkata');
-    const today = now.format('YYYY-MM-DD');
+
     const classDetails = await CreateClass.findOne({ classCode });
-    if (!classDetails) return res.status(404).json({ message: 'No matching class found for today' });
+    if (!classDetails) return res.status(404).json({ message: 'Class not found' });
+
     const geoData = await AddClass.findOne({ className: new RegExp(`^${className}$`, 'i') });
-    if (!geoData) return res.status(404).json({ message: 'Class location data not found' });
-    const userLocation = { latitude, longitude };
-    const classLocation = { latitude: geoData.latitude, longitude: geoData.longitude };
-    const distance = haversine(userLocation, classLocation);
-    if (distance > geoData.radius) return res.status(403).json({ message: 'You are not within the class area', distance: Math.round(distance), allowedRadius: geoData.radius });
-    const expectedBeaconId = geoData?.beaconId ? geoData.beaconId.trim().toLowerCase() : null;
-    const receivedBeaconId = beaconProximity?.beaconId ? beaconProximity.beaconId.trim().toLowerCase() : null;
-    if (expectedBeaconId && (!receivedBeaconId || receivedBeaconId !== expectedBeaconId)) return res.status(403).json({ message: 'Required beacon not detected or out of range', expectedBeaconId: geoData?.beaconId, receivedBeaconId: beaconProximity?.beaconId });
-    if (classCode !== classDetails.classCode) return res.status(403).json({ message: 'Invalid class code provided', expected: classDetails.classCode });
-    const classDate = moment.tz(`${classDetails.date} ${classDetails.startTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
-    const attendanceWindowEnd = moment(classDate).add(15, 'minutes');
-    const classEndDate = moment.tz(`${classDetails.date} ${classDetails.endTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
-    if (now.isAfter(classEndDate)) return res.status(403).json({ message: 'Class has already ended' });
-    const existingAttendance = await Attendance.findOne({ rollNumber, className: classDetails.className, subject: classDetails.subject, time: { $gte: moment(classDate).startOf('day').toDate(), $lt: moment(classDate).endOf('day').toDate() } });
-    if (existingAttendance) {
-      if (existingAttendance.status === 'Present') return res.status(400).json({ message: 'Attendance already submitted for this class' });
-      if (existingAttendance.status === 'Absent' && now.isBefore(classEndDate)) {
-        existingAttendance.status = 'Present';
-        existingAttendance.time = now.toDate();
-        existingAttendance.autoMarked = false;
-        existingAttendance.verificationMethod = 'manual';
-        await existingAttendance.save();
-        return res.status(200).json({ message: 'Late attendance submitted successfully', details: { className: classDetails.className, subject: classDetails.subject } });
-      }
+    if (!geoData) return res.status(404).json({ message: 'Class location not found' });
+
+    const distance = haversine({ latitude, longitude }, { latitude: geoData.latitude, longitude: geoData.longitude });
+    if (distance > geoData.radius) return res.status(403).json({ message: 'Not within class area' });
+
+    const expectedBeaconId = geoData?.beaconId?.trim()?.toLowerCase();
+    const receivedBeaconId = beaconProximity?.beaconId?.trim()?.toLowerCase();
+    if (expectedBeaconId && receivedBeaconId !== expectedBeaconId) {
+      return res.status(403).json({ message: 'Required beacon not detected', expected: geoData.beaconId });
     }
-    const attendanceData = { rollNumber, classId: classDetails._id, className: classDetails.className, subject: classDetails.subject, classCode: classDetails.classCode, status: 'Present', time: now.toDate(), verificationMethod: 'manual' };
+
+    const now = moment().tz(TZ);
+    const { classDate, classEndDate, attendanceWindowEnd } = getClassMoments(classDetails);
+
+    if (now.isAfter(classEndDate)) return res.status(403).json({ message: 'Class has ended' });
+
+    const existingAttendance = await Attendance.findOne({
+      rollNumber,
+      className: classDetails.className,
+      subject: classDetails.subject,
+      time: {
+        $gte: moment(classDate).startOf('day').toDate(),
+        $lt: moment(classDate).endOf('day').toDate(),
+      },
+    });
+
+    if (existingAttendance?.status === 'Present') {
+      return res.status(400).json({ message: 'Attendance already marked' });
+    }
+
+    // If previously auto-marked Absent and class not ended, flip to Present
+    if (existingAttendance && existingAttendance.status === 'Absent' && now.isBefore(classEndDate)) {
+      existingAttendance.status = 'Present';
+      existingAttendance.time = now.toDate();
+      existingAttendance.autoMarked = false;
+      existingAttendance.verificationMethod = 'manual';
+      if (now.isAfter(attendanceWindowEnd)) existingAttendance.lateSubmission = true;
+      await existingAttendance.save();
+      return res.status(200).json({
+        message: `Attendance submitted${existingAttendance.lateSubmission ? ' (Late)' : ''}`,
+        details: { className: classDetails.className, subject: classDetails.subject, verificationMethod: 'manual' },
+      });
+    }
+
+    // Fresh manual record
+    const attendanceData = {
+      rollNumber,
+      classId: classDetails._id,
+      className: classDetails.className,
+      subject: classDetails.subject,
+      classCode: classDetails.classCode,
+      status: 'Present',
+      time: now.toDate(),
+      verificationMethod: 'manual',
+    };
     if (now.isAfter(attendanceWindowEnd)) attendanceData.lateSubmission = true;
-    const attendance = new Attendance(attendanceData);
-    await attendance.save();
-    return res.status(200).json({ message: `Attendance submitted successfully${attendanceData.lateSubmission ? ' (Late)' : ''}`, details: { className: classDetails.className, subject: classDetails.subject, verificationMethod: 'manual', lateSubmission: attendanceData.lateSubmission || false } });
+
+    await new Attendance(attendanceData).save();
+
+    res.status(200).json({
+      message: `Attendance submitted${attendanceData.lateSubmission ? ' (Late)' : ''}`,
+      details: {
+        className: classDetails.className,
+        subject: classDetails.subject,
+        verificationMethod: 'manual',
+        lateSubmission: attendanceData.lateSubmission || false,
+      },
+    });
   } catch (error) {
-    console.error("❌ Error submitting attendance:", error);
-    return res.status(500).json({ message: 'Error submitting attendance', error: error.message });
+    console.error('Error submitting attendance:', error);
+    res.status(500).json({ message: 'Error submitting attendance' });
   }
 };
 
@@ -201,24 +543,47 @@ exports.getAttendanceHistory = async (req, res) => {
     const { rollNumber } = req.params;
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ message: 'Student not found' });
-    const attendanceHistory = await Attendance.find({ rollNumber }).sort({ time: -1 }).lean();
-    const formattedHistory = attendanceHistory.map(record => ({
-      _id: record._id, className: record.className, subject: record.subject, status: record.status,
+
+    const history = await Attendance.find({ rollNumber }).sort({ time: -1 }).lean();
+
+    const formattedHistory = history.map((record) => ({
+      _id: record._id,
+      className: record.className,
+      subject: record.subject,
+      status: record.status,
       date: new Date(record.time).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
       time: new Date(record.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      lateSubmission: record.lateSubmission || false, autoMarked: record.autoMarked || false,
-      verificationMethod: record.verificationMethod || 'manual', faceVerificationScore: record.faceVerificationScore || null
+      lateSubmission: record.lateSubmission || false,
+      autoMarked: record.autoMarked || false,
+      verificationMethod: record.verificationMethod || 'manual',
+      // Keep both for UI compatibility
+      faceConfidence: record.faceConfidence || record.faceVerificationScore || null,
+      faceVerificationScore: record.faceVerificationScore || record.faceConfidence || null,
+      verificationType: record.verificationType || null,
     }));
-    const totalClasses = attendanceHistory.length;
-    const presentClasses = attendanceHistory.filter(record => record.status === 'Present').length;
-    const absentClasses = attendanceHistory.filter(record => record.status === 'Absent').length;
-    const lateSubmissions = attendanceHistory.filter(record => record.lateSubmission).length;
-    const faceVerifications = attendanceHistory.filter(record => record.verificationMethod === 'face').length;
-    const attendancePercentage = totalClasses > 0 ? Math.round((presentClasses / totalClasses) * 100) : 0;
-    res.status(200).json({ success: true, history: formattedHistory, statistics: { totalClasses, presentClasses, absentClasses, lateSubmissions, faceVerifications, attendancePercentage }, studentInfo: { rollNumber: student.rollNumber, faceEnrolled: student.faceEnrolled || false, faceEnrollmentDate: student.faceEnrollmentDate || null } });
+
+    const stats = {
+      totalClasses: history.length,
+      presentClasses: history.filter((r) => r.status === 'Present').length,
+      absentClasses: history.filter((r) => r.status === 'Absent').length,
+      lateSubmissions: history.filter((r) => r.lateSubmission).length,
+      faceVerifications: history.filter((r) => r.verificationMethod === 'face').length,
+    };
+    stats.attendancePercentage = stats.totalClasses > 0 ? Math.round((stats.presentClasses / stats.totalClasses) * 100) : 0;
+
+    res.status(200).json({
+      success: true,
+      history: formattedHistory,
+      statistics: stats,
+      studentInfo: {
+        rollNumber: student.rollNumber,
+        faceEnrolled: student.faceEnrolled || false,
+        faceEnrollmentDate: student.faceEnrollmentDate || null,
+      },
+    });
   } catch (error) {
     console.error('Error fetching attendance history:', error);
-    res.status(500).json({ success: false, message: 'Error fetching attendance history', error: error.message });
+    res.status(500).json({ success: false, message: 'Error fetching history' });
   }
 };
 
@@ -227,10 +592,17 @@ exports.getFaceEnrollmentStatus = async (req, res) => {
     const { rollNumber } = req.params;
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
-    res.status(200).json({ success: true, faceEnrolled: student.faceEnrolled || false, enrollmentDate: student.faceEnrollmentDate || null, stepsCompleted: student.livenessSteps?.length || 0 });
+
+    res.status(200).json({
+      success: true,
+      faceEnrolled: student.faceEnrolled || false,
+      enrollmentDate: student.faceEnrollmentDate || null,
+      descriptorCount: Array.isArray(student.faceDescriptors) ? student.faceDescriptors.length : 0,
+      stepsCompleted: student.livenessSteps?.length || 0,
+      hasEmbedding: Boolean(student.faceEmbedding),
+    });
   } catch (error) {
-    console.error('Error fetching face enrollment status:', error);
-    res.status(500).json({ success: false, message: 'Error fetching face enrollment status', error: error.message });
+    res.status(500).json({ success: false, message: 'Error fetching status' });
   }
 };
 
@@ -239,15 +611,21 @@ exports.resetFaceEnrollment = async (req, res) => {
     const { rollNumber } = req.body;
     const student = await Student.findOne({ rollNumber });
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+
+    // Clear both formats
+    student.faceDescriptors = null;
+    student.faceDetectionData = null;
+
     student.faceEmbedding = null;
     student.faceVerificationHash = null;
-    student.faceEnrollmentDate = null;
     student.livenessSteps = [];
+
+    student.faceEnrollmentDate = null;
     student.faceEnrolled = false;
     await student.save();
+
     res.status(200).json({ success: true, message: 'Face enrollment reset successfully' });
   } catch (error) {
-    console.error('❌ Error resetting face enrollment:', error);
-    res.status(500).json({ success: false, message: 'Error resetting face enrollment', error: error.message });
+    res.status(500).json({ success: false, message: 'Error resetting enrollment' });
   }
 };
