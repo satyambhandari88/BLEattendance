@@ -30,21 +30,35 @@ const StudentSchema = new mongoose.Schema({
   
   faceEnrolled: { type: Boolean, default: false },
   faceEnrollmentDate: { type: Date, default: null },
+  lastLoginAt: { type: Date, default: null },
   
   // Deprecated - keeping for backward compatibility
-  faceData: { type: String }
+  faceData: { type: String },
+  faceEmbedding: { type: String } // Also keeping for backward compatibility
 }, { timestamps: true });
 
-// Hash password before saving
+// Hash password before saving (only for new passwords)
 StudentSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
+  
+  // Check if password is already hashed (bcrypt hashes start with $2a$, $2b$, or $2y$)
+  if (this.password.match(/^\$2[aby]\$/)) {
+    return next();
+  }
+  
   this.password = await bcrypt.hash(this.password, 10);
   next();
 });
 
-// Compare password method
+// Compare password method - supports both hashed and plain text (for backward compatibility)
 StudentSchema.methods.comparePassword = async function(candidatePassword) {
-  return bcrypt.compare(candidatePassword, this.password);
+  // If password starts with bcrypt format, use bcrypt compare
+  if (this.password.match(/^\$2[aby]\$/)) {
+    return bcrypt.compare(candidatePassword, this.password);
+  }
+  
+  // Otherwise, use plain text comparison (for existing plain text passwords)
+  return this.password === candidatePassword;
 };
 
 // Check if face is enrolled
@@ -58,7 +72,8 @@ StudentSchema.methods.getFaceStatus = function() {
     enrolled: this.faceEnrolled || false,
     enrollmentDate: this.faceEnrollmentDate,
     descriptorCount: this.faceDescriptors ? this.faceDescriptors.length : 0,
-    hasDetectionData: !!this.faceDetectionData
+    hasDetectionData: !!this.faceDetectionData,
+    hasLegacyData: !!(this.faceData || this.faceEmbedding)
   };
 };
 
