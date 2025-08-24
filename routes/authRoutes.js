@@ -99,7 +99,6 @@ router.post('/teacher/login', async (req, res) => {
 // Student Login
 router.post('/student/login', async (req, res) => {
   const { rollNumber, email, password, deviceId } = req.body;
-
   try {
     // Input validation
     if (!rollNumber || !email || !password || !deviceId) {
@@ -116,8 +115,8 @@ router.post('/student/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Check password (update this to bcrypt.compare if using hashed passwords)
-    const isPasswordCorrect = student.password === password;
+    // Check password using the schema method (supports both bcrypt and plain text for backward compatibility)
+    const isPasswordCorrect = await student.comparePassword(password);
     if (!isPasswordCorrect) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -152,8 +151,9 @@ router.post('/student/login', async (req, res) => {
       await Student.findByIdAndUpdate(student._id, { lastLoginAt: new Date() });
     }
 
-    // Check face enrollment status
-    const faceEnrollmentCompleted = student.faceEmbedding ? true : false;
+    // Check face enrollment status using the schema method
+    const faceStatus = student.getFaceStatus();
+    const faceEnrollmentCompleted = faceStatus.enrolled;
 
     // Return success response
     res.status(200).json({
@@ -166,6 +166,8 @@ router.post('/student/login', async (req, res) => {
       token: generateToken(student._id),
       deviceId: student.deviceId,
       faceEnrollmentCompleted,
+      isFirstLogin: !faceEnrollmentCompleted, // Flag to indicate if face enrollment is needed
+      faceStatus: faceStatus // Additional face enrollment details
     });
   } catch (error) {
     console.error('Login error:', error);
