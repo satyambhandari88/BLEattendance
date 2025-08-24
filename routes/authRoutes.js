@@ -99,16 +99,12 @@ router.post('/teacher/login', async (req, res) => {
 // Student Login
 router.post('/student/login', async (req, res) => {
   const { rollNumber, email, password, deviceId } = req.body;
-  
+
   try {
-    // Input validation
     if (!rollNumber || !email || !password || !deviceId) {
-      return res.status(400).json({ 
-        message: 'All fields are required' 
-      });
+      return res.status(400).json({ message: 'All fields are required' });
     }
 
-    // Find student with normalized data
     const student = await Student.findOne({ 
       rollNumber: rollNumber.trim(), 
       email: email.toLowerCase().trim() 
@@ -118,48 +114,32 @@ router.post('/student/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Check password (update this to bcrypt.compare if using hashed passwords)
-    const isPasswordCorrect = student.password === password;
+    const isPasswordCorrect = await student.comparePassword(password);
     if (!isPasswordCorrect) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
     // Device binding logic
-    const deviceUsedByAnother = await Student.findOne({ 
-      deviceId, 
-      _id: { $ne: student._id } 
-    });
+    const deviceUsedByAnother = await Student.findOne({ deviceId, _id: { $ne: student._id } });
 
-    // Check if student's account is locked to another device
     if (student.deviceId && student.deviceId !== deviceId) {
-      return res.status(403).json({ 
-        message: 'Your account is locked to another device.' 
-      });
+      return res.status(403).json({ message: 'Your account is locked to another device.' });
     }
 
-    // Check if this device is already assigned to another student
     if (!student.deviceId && deviceUsedByAnother) {
-      return res.status(403).json({ 
-        message: 'This device is already assigned to another student.' 
-      });
+      return res.status(403).json({ message: 'This device is already assigned to another student.' });
     }
 
-    // Assign device to student if not already assigned
     if (!student.deviceId) {
       student.deviceId = deviceId;
       student.lastLoginAt = new Date();
       await student.save();
     } else {
-      // Update last login for existing device
-      await Student.findByIdAndUpdate(student._id, { 
-        lastLoginAt: new Date() 
-      });
+      await Student.findByIdAndUpdate(student._id, { lastLoginAt: new Date() });
     }
 
-    // Check face enrollment status
-    const faceEnrollmentCompleted = student.faceEmbedding ? true : false;
+    const faceEnrollmentCompleted = student.isFaceEnrolled();
 
-    // Return success response
     res.status(200).json({
       _id: student._id,
       name: student.name,
@@ -174,11 +154,10 @@ router.post('/student/login', async (req, res) => {
 
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({ 
-      message: 'Server error. Please try again later.' 
-    });
+    res.status(500).json({ message: 'Server error. Please try again later.' });
   }
 });
+
 
 
 module.exports = router;
