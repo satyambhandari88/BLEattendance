@@ -1,4 +1,4 @@
-// controllers/studentController.js
+// controllers/studentController.js - FIXED VERSION
 
 const AddClass = require('../models/AddClass');
 const CreateClass = require('../models/CreateClass');
@@ -72,35 +72,66 @@ const calculateEuclideanDistance = (desc1, desc2) => {
   return Math.sqrt(sum);
 };
 
-// Verify numeric descriptors (preferred)
-const verifyFaceDescriptor = (storedDescriptor, currentDescriptor, threshold = 0.6) => {
+// Cosine similarity for better face matching
+const calculateCosineSimilarity = (desc1, desc2) => {
+  if (!desc1 || !desc2 || desc1.length !== desc2.length) return 0;
+  
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  
+  for (let i = 0; i < desc1.length; i++) {
+    dotProduct += desc1[i] * desc2[i];
+    normA += Math.pow(desc1[i], 2);
+    normB += Math.pow(desc2[i], 2);
+  }
+  
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+};
+
+// Verify numeric descriptors (preferred) - FIXED: Using cosine similarity
+const verifyFaceDescriptor = (storedDescriptors, currentDescriptor, threshold = 0.6) => {
   try {
-    if (!storedDescriptor || !currentDescriptor)
-      return { isValid: false, distance: 1, confidence: 0, threshold, method: 'descriptor' };
-
-    const storedDescs = Array.isArray(storedDescriptor) ? storedDescriptor : [storedDescriptor];
-    let minDistance = 1;
-
-    for (const desc of storedDescs) {
-      const distance = calculateEuclideanDistance(desc, currentDescriptor);
-      if (distance < minDistance) minDistance = distance;
+    if (!storedDescriptors || !currentDescriptor) {
+      return { isValid: false, similarity: 0, confidence: 0, threshold, method: 'descriptor', error: 'Missing descriptors' };
     }
 
-    const isValid = minDistance <= threshold;
-    const confidence = Math.max(0, Math.round((1 - minDistance) * 100)); // 0-100
+    const storedDescs = Array.isArray(storedDescriptors) && Array.isArray(storedDescriptors[0]) 
+      ? storedDescriptors 
+      : [storedDescriptors];
+    
+    let maxSimilarity = 0;
 
-    return { isValid, distance: Math.round(minDistance * 1000) / 1000, confidence, threshold, method: 'descriptor' };
+    for (const desc of storedDescs) {
+      if (!desc || !Array.isArray(desc) || desc.length !== 128) continue;
+      
+      const similarity = calculateCosineSimilarity(desc, currentDescriptor);
+      if (similarity > maxSimilarity) maxSimilarity = similarity;
+    }
+
+    const isValid = maxSimilarity >= threshold;
+    const confidence = Math.max(0, Math.round(maxSimilarity * 100)); // 0-100
+
+    return { 
+      isValid, 
+      similarity: Math.round(maxSimilarity * 1000) / 1000, 
+      confidence, 
+      threshold, 
+      method: 'descriptor' 
+    };
   } catch (error) {
     console.error('Face verification (descriptor) error:', error);
-    return { isValid: false, distance: 1, confidence: 0, threshold, method: 'descriptor', error: error.message };
+    return { isValid: false, similarity: 0, confidence: 0, threshold, method: 'descriptor', error: error.message };
   }
 };
 
-// Back-compat “string embedding” similarity (max char match ratio)
+// Back-compat "string embedding" similarity (max char match ratio)
 const verifyFaceEmbedding = (storedEmbedding, currentEmbedding, threshold = 0.15) => {
   try {
-    if (!storedEmbedding || !currentEmbedding)
-      return { isValid: false, similarity: 0, confidence: 0, threshold, method: 'embedding' };
+    if (!storedEmbedding || !currentEmbedding) {
+      return { isValid: false, similarity: 0, confidence: 0, threshold, method: 'embedding', error: 'Missing embeddings' };
+    }
 
     const storedSteps = String(storedEmbedding).split('|');
     let maxSimilarity = 0;
@@ -108,13 +139,15 @@ const verifyFaceEmbedding = (storedEmbedding, currentEmbedding, threshold = 0.15
     for (const stepEmbedding of storedSteps) {
       let matches = 0;
       const minLength = Math.min(stepEmbedding.length, currentEmbedding.length);
-      for (let i = 0; i < minLength; i++) if (stepEmbedding[i] === currentEmbedding[i]) matches++;
-      const similarity = matches / Math.max(stepEmbedding.length, currentEmbedding.length);
+      for (let i = 0; i < minLength; i++) {
+        if (stepEmbedding[i] === currentEmbedding[i]) matches++;
+      }
+      const similarity = matches / Math.max(stepEmbedding.length, currentEmbedding.length, 1);
       if (similarity > maxSimilarity) maxSimilarity = similarity;
     }
 
     const isValid = maxSimilarity >= threshold;
-    const confidence = Math.round(maxSimilarity * 100); // map to 0-100
+    const confidence = Math.round(maxSimilarity * 100);
 
     return {
       isValid,
@@ -129,25 +162,33 @@ const verifyFaceEmbedding = (storedEmbedding, currentEmbedding, threshold = 0.15
   }
 };
 
-// Unified verify that supports both storage formats.
-// Priority: descriptors (if both provided).
+// Unified verify that supports both storage formats
 const unifiedVerifyFace = (student, body) => {
-  // 1) Numeric descriptors preferred
-  if (student?.faceDescriptors?.length && Array.isArray(body?.faceDescriptor)) {
-    return verifyFaceDescriptor(student.faceDescriptors, body.faceDescriptor);
+  try {
+    // 1) Numeric descriptors preferred
+    if (student?.faceDescriptors?.length && Array.isArray(body?.faceDescriptor)) {
+      return verifyFaceDescriptor(student.faceDescriptors, body.faceDescriptor, 0.55); // Lower threshold for better UX
+    }
+    
+    // 2) Back-compat string embeddings
+    if (student?.faceEmbedding && body?.faceEmbedding) {
+      return verifyFaceEmbedding(student.faceEmbedding, body.faceEmbedding, 0.12); // Lower threshold
+    }
+    
+    // 3) Error cases
+    if (student?.faceDescriptors?.length) {
+      return { isValid: false, confidence: 0, method: 'descriptor', error: 'Current face descriptor missing' };
+    }
+    
+    if (student?.faceEmbedding) {
+      return { isValid: false, confidence: 0, method: 'embedding', error: 'Current face embedding missing' };
+    }
+    
+    return { isValid: false, confidence: 0, error: 'No enrolled face data found' };
+  } catch (error) {
+    console.error('Unified face verification error:', error);
+    return { isValid: false, confidence: 0, error: error.message };
   }
-  // 2) Back-compat string embeddings
-  if (student?.faceEmbedding && body?.faceEmbedding) {
-    return verifyFaceEmbedding(student.faceEmbedding, body.faceEmbedding);
-  }
-  // 3) If only one side is present, try to be helpful
-  if (student?.faceDescriptors?.length) {
-    return { isValid: false, confidence: 0, method: 'descriptor', error: 'Current numeric faceDescriptor missing' };
-  }
-  if (student?.faceEmbedding) {
-    return { isValid: false, confidence: 0, method: 'embedding', error: 'Current faceEmbedding missing' };
-  }
-  return { isValid: false, confidence: 0, error: 'No enrolled face data found' };
 };
 
 /* =========================
@@ -158,12 +199,8 @@ exports.enrollFace = async (req, res) => {
   try {
     const {
       rollNumber,
-
-      // New recommended (numeric descriptors)
       faceDescriptors,
       detectionData,
-
-      // Back-compat (string)
       faceEmbedding,
       verificationHash,
       livenessSteps,
@@ -183,9 +220,11 @@ exports.enrollFace = async (req, res) => {
       const validDescriptors = faceDescriptors.filter(
         (desc) => Array.isArray(desc) && desc.length === 128 && desc.every((v) => typeof v === 'number')
       );
+      
       if (validDescriptors.length === 0) {
         return res.status(400).json({ success: false, message: 'Invalid face descriptors provided' });
       }
+      
       student.faceDescriptors = validDescriptors;
       descriptorCount = validDescriptors.length;
       student.faceDetectionData = detectionData || {};
@@ -234,16 +273,15 @@ exports.verifyFaceAttendance = async (req, res) => {
       longitude,
       beaconProximity,
       classCode,
-
-      // Either/or inputs supported
-      faceDescriptor, // numeric [128]
-      faceEmbedding,  // back-compat string
+      faceDescriptor,
+      faceEmbedding,
     } = req.body;
 
     // Field checks
     if (!rollNumber || !className || !latitude || !longitude || !classCode) {
       return res.status(400).json({ success: false, message: 'Missing required fields for verification' });
     }
+    
     if (!faceDescriptor && !faceEmbedding) {
       return res.status(400).json({ success: false, message: 'Provide faceDescriptor or faceEmbedding' });
     }
@@ -261,13 +299,13 @@ exports.verifyFaceAttendance = async (req, res) => {
 
     // Face verification
     const verification = unifiedVerifyFace(student, { faceDescriptor, faceEmbedding });
+    
     if (!verification.isValid) {
       return res.status(403).json({
         success: false,
-        message:
-          verification.method === 'descriptor'
-            ? `Face verification failed. Confidence: ${verification.confidence}% (required ~40%+).`
-            : 'Face verification failed. Please try again or use manual check-in.',
+        message: verification.method === 'descriptor'
+          ? `Face verification failed. Confidence: ${verification.confidence}% (required ~55%+).`
+          : 'Face verification failed. Please try again or use manual check-in.',
         confidence: verification.confidence,
         method: verification.method,
         threshold: verification.threshold,
@@ -279,7 +317,11 @@ exports.verifyFaceAttendance = async (req, res) => {
     const geoData = await AddClass.findOne({ className: new RegExp(`^${className}$`, 'i') });
     if (!geoData) return res.status(404).json({ success: false, message: 'Class location data not found' });
 
-    const distance = haversine({ latitude, longitude }, { latitude: geoData.latitude, longitude: geoData.longitude });
+    const distance = haversine(
+      { latitude: parseFloat(latitude), longitude: parseFloat(longitude) },
+      { latitude: geoData.latitude, longitude: geoData.longitude }
+    );
+    
     if (distance > geoData.radius) {
       return res.status(403).json({
         success: false,
@@ -291,18 +333,23 @@ exports.verifyFaceAttendance = async (req, res) => {
 
     const expectedBeaconId = geoData?.beaconId?.trim()?.toLowerCase();
     const receivedBeaconId = beaconProximity?.beaconId?.trim()?.toLowerCase();
+    
     if (expectedBeaconId && receivedBeaconId !== expectedBeaconId) {
       return res.status(403).json({
         success: false,
         message: 'Required beacon not detected',
         expected: geoData.beaconId,
+        received: beaconProximity?.beaconId,
       });
     }
 
     // Time checks
     const now = moment().tz(TZ);
     const { classDate, classEndDate, attendanceWindowEnd } = getClassMoments(classDetails);
-    if (now.isAfter(classEndDate)) return res.status(403).json({ success: false, message: 'Class has ended' });
+    
+    if (now.isAfter(classEndDate)) {
+      return res.status(403).json({ success: false, message: 'Class has ended' });
+    }
 
     // Existing attendance (per class day)
     const existingAttendance = await Attendance.findOne({
@@ -329,12 +376,14 @@ exports.verifyFaceAttendance = async (req, res) => {
       status: 'Present',
       time: now.toDate(),
       verificationMethod: 'face',
-      faceConfidence: verification.confidence,            // normalized 0-100
-      faceVerificationScore: verification.confidence,     // keep also for back-compat stats screens
-      verificationType: verification.method,              // 'descriptor' | 'embedding'
+      faceConfidence: verification.confidence,
+      faceVerificationScore: verification.confidence,
+      verificationType: verification.method,
     };
 
-    if (now.isAfter(attendanceWindowEnd)) attendanceData.lateSubmission = true;
+    if (now.isAfter(attendanceWindowEnd)) {
+      attendanceData.lateSubmission = true;
+    }
 
     let attendance;
     if (existingAttendance) {
@@ -397,10 +446,15 @@ exports.fetchNotifications = async (req, res) => {
         const isWindowClosed = serverTime.isAfter(attendanceWindowEnd);
 
         let status = 'upcoming';
-        if (existingAttendance) status = existingAttendance.status === 'Present' ? 'marked' : 'absent';
-        else if (isWindowClosed) status = 'absent';
-        else if (minutesFromStart >= 0 && minutesFromStart <= 15) status = 'active';
-        else if (minutesUntilStart <= 5) status = 'starting_soon';
+        if (existingAttendance) {
+          status = existingAttendance.status === 'Present' ? 'marked' : 'absent';
+        } else if (isWindowClosed) {
+          status = 'absent';
+        } else if (minutesFromStart >= 0 && minutesFromStart <= 15) {
+          status = 'active';
+        } else if (minutesUntilStart <= 5) {
+          status = 'starting_soon';
+        }
 
         return {
           className: classInfo.className,
@@ -431,7 +485,7 @@ exports.fetchNotifications = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching notifications:', error);
-    res.status(500).json({ message: 'Error fetching notifications' });
+    res.status(500).json({ message: 'Error fetching notifications', error: error.message });
   }
 };
 
@@ -445,8 +499,6 @@ exports.submitAttendance = async (req, res) => {
       beaconProximity,
       classCode,
       useFaceVerification,
-
-      // Either/or if face verification chosen
       faceDescriptor,
       faceEmbedding,
     } = req.body;
@@ -466,19 +518,32 @@ exports.submitAttendance = async (req, res) => {
     const geoData = await AddClass.findOne({ className: new RegExp(`^${className}$`, 'i') });
     if (!geoData) return res.status(404).json({ message: 'Class location not found' });
 
-    const distance = haversine({ latitude, longitude }, { latitude: geoData.latitude, longitude: geoData.longitude });
-    if (distance > geoData.radius) return res.status(403).json({ message: 'Not within class area' });
+    const distance = haversine(
+      { latitude: parseFloat(latitude), longitude: parseFloat(longitude) },
+      { latitude: geoData.latitude, longitude: geoData.longitude }
+    );
+    
+    if (distance > geoData.radius) {
+      return res.status(403).json({ message: 'Not within class area', distance: Math.round(distance) });
+    }
 
     const expectedBeaconId = geoData?.beaconId?.trim()?.toLowerCase();
     const receivedBeaconId = beaconProximity?.beaconId?.trim()?.toLowerCase();
+    
     if (expectedBeaconId && receivedBeaconId !== expectedBeaconId) {
-      return res.status(403).json({ message: 'Required beacon not detected', expected: geoData.beaconId });
+      return res.status(403).json({ 
+        message: 'Required beacon not detected', 
+        expected: geoData.beaconId,
+        received: beaconProximity?.beaconId 
+      });
     }
 
     const now = moment().tz(TZ);
     const { classDate, classEndDate, attendanceWindowEnd } = getClassMoments(classDetails);
 
-    if (now.isAfter(classEndDate)) return res.status(403).json({ message: 'Class has ended' });
+    if (now.isAfter(classEndDate)) {
+      return res.status(403).json({ message: 'Class has ended' });
+    }
 
     const existingAttendance = await Attendance.findOne({
       rollNumber,
@@ -500,11 +565,20 @@ exports.submitAttendance = async (req, res) => {
       existingAttendance.time = now.toDate();
       existingAttendance.autoMarked = false;
       existingAttendance.verificationMethod = 'manual';
-      if (now.isAfter(attendanceWindowEnd)) existingAttendance.lateSubmission = true;
+      
+      if (now.isAfter(attendanceWindowEnd)) {
+        existingAttendance.lateSubmission = true;
+      }
+      
       await existingAttendance.save();
+      
       return res.status(200).json({
         message: `Attendance submitted${existingAttendance.lateSubmission ? ' (Late)' : ''}`,
-        details: { className: classDetails.className, subject: classDetails.subject, verificationMethod: 'manual' },
+        details: { 
+          className: classDetails.className, 
+          subject: classDetails.subject, 
+          verificationMethod: 'manual' 
+        },
       });
     }
 
@@ -519,7 +593,10 @@ exports.submitAttendance = async (req, res) => {
       time: now.toDate(),
       verificationMethod: 'manual',
     };
-    if (now.isAfter(attendanceWindowEnd)) attendanceData.lateSubmission = true;
+    
+    if (now.isAfter(attendanceWindowEnd)) {
+      attendanceData.lateSubmission = true;
+    }
 
     await new Attendance(attendanceData).save();
 
@@ -534,7 +611,7 @@ exports.submitAttendance = async (req, res) => {
     });
   } catch (error) {
     console.error('Error submitting attendance:', error);
-    res.status(500).json({ message: 'Error submitting attendance' });
+    res.status(500).json({ message: 'Error submitting attendance', error: error.message });
   }
 };
 
@@ -542,7 +619,10 @@ exports.getAttendanceHistory = async (req, res) => {
   try {
     const { rollNumber } = req.params;
     const student = await Student.findOne({ rollNumber });
-    if (!student) return res.status(404).json({ message: 'Student not found' });
+    
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student not found' });
+    }
 
     const history = await Attendance.find({ rollNumber }).sort({ time: -1 }).lean();
 
@@ -556,7 +636,6 @@ exports.getAttendanceHistory = async (req, res) => {
       lateSubmission: record.lateSubmission || false,
       autoMarked: record.autoMarked || false,
       verificationMethod: record.verificationMethod || 'manual',
-      // Keep both for UI compatibility
       faceConfidence: record.faceConfidence || record.faceVerificationScore || null,
       faceVerificationScore: record.faceVerificationScore || record.faceConfidence || null,
       verificationType: record.verificationType || null,
@@ -569,7 +648,10 @@ exports.getAttendanceHistory = async (req, res) => {
       lateSubmissions: history.filter((r) => r.lateSubmission).length,
       faceVerifications: history.filter((r) => r.verificationMethod === 'face').length,
     };
-    stats.attendancePercentage = stats.totalClasses > 0 ? Math.round((stats.presentClasses / stats.totalClasses) * 100) : 0;
+    
+    stats.attendancePercentage = stats.totalClasses > 0 
+      ? Math.round((stats.presentClasses / stats.totalClasses) * 100) 
+      : 0;
 
     res.status(200).json({
       success: true,
@@ -583,7 +665,7 @@ exports.getAttendanceHistory = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching attendance history:', error);
-    res.status(500).json({ success: false, message: 'Error fetching history' });
+    res.status(500).json({ success: false, message: 'Error fetching history', error: error.message });
   }
 };
 
@@ -591,7 +673,10 @@ exports.getFaceEnrollmentStatus = async (req, res) => {
   try {
     const { rollNumber } = req.params;
     const student = await Student.findOne({ rollNumber });
-    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+    
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student not found' });
+    }
 
     res.status(200).json({
       success: true,
@@ -602,7 +687,8 @@ exports.getFaceEnrollmentStatus = async (req, res) => {
       hasEmbedding: Boolean(student.faceEmbedding),
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error fetching status' });
+    console.error('Error fetching face enrollment status:', error);
+    res.status(500).json({ success: false, message: 'Error fetching status', error: error.message });
   }
 };
 
@@ -610,29 +696,28 @@ exports.resetFaceEnrollment = async (req, res) => {
   try {
     const { rollNumber } = req.body;
     const student = await Student.findOne({ rollNumber });
-    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+    
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student not found' });
+    }
 
     // Clear both formats
-    student.faceDescriptors = null;
-    student.faceDetectionData = null;
-
-    student.faceEmbedding = null;
-    student.faceVerificationHash = null;
+    student.faceDescriptors = undefined;
+    student.faceDetectionData = undefined;
+    student.faceEmbedding = undefined;
+    student.faceVerificationHash = undefined;
     student.livenessSteps = [];
-
-    student.faceEnrollmentDate = null;
+    student.faceEnrollmentDate = undefined;
     student.faceEnrolled = false;
+    
     await student.save();
 
     res.status(200).json({ success: true, message: 'Face enrollment reset successfully' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Error resetting enrollment' });
+    console.error('Error resetting face enrollment:', error);
+    res.status(500).json({ success: false, message: 'Error resetting enrollment', error: error.message });
   }
 };
-
-
-
-
 
 exports.verifyFaceOnly = async (req, res) => {
   try {
@@ -641,11 +726,13 @@ exports.verifyFaceOnly = async (req, res) => {
     if (!rollNumber) {
       return res.status(400).json({ success: false, message: 'Roll number is required' });
     }
+    
     if (!faceDescriptor && !faceEmbedding) {
       return res.status(400).json({ success: false, message: 'Provide faceDescriptor or faceEmbedding' });
     }
 
     const student = await Student.findOne({ rollNumber });
+    
     if (!student) {
       return res.status(404).json({ success: false, message: 'Student not found' });
     }
@@ -664,7 +751,7 @@ exports.verifyFaceOnly = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: verification.method === 'descriptor'
-          ? `Face verification failed. Confidence: ${verification.confidence}% (required ~40%+).`
+          ? `Face verification failed. Confidence: ${verification.confidence}% (required ~55%+).`
           : 'Face verification failed. Please try again.',
         confidence: verification.confidence,
         method: verification.method,
@@ -683,7 +770,7 @@ exports.verifyFaceOnly = async (req, res) => {
         rollNumber: student.rollNumber,
         confidence: verification.confidence,
         method: verification.method,
-        distance: verification.distance || verification.similarity
+        similarity: verification.similarity || (1 - (verification.distance || 0))
       }
     });
 
@@ -696,4 +783,3 @@ exports.verifyFaceOnly = async (req, res) => {
     });
   }
 };
-
