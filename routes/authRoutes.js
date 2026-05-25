@@ -99,63 +99,86 @@ router.post('/teacher/login', async (req, res) => {
 // Student Login
 router.post('/student/login', async (req, res) => {
   const { rollNumber, email, password, deviceId } = req.body;
+
   try {
-    // Input validation
+    // Validate input
     if (!rollNumber || !email || !password || !deviceId) {
-      return res.status(400).json({ message: 'All fields are required' });
+      return res.status(400).json({
+        message: 'All fields are required',
+      });
     }
 
-    // Find student with normalized data
+    // Normalize values
+    const normalizedRoll = rollNumber.trim();
+    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedDeviceId = deviceId.trim();
+
+    // Extra device validation
+    if (normalizedDeviceId.length < 5) {
+      return res.status(400).json({
+        message: 'Invalid device ID',
+      });
+    }
+
+    // Find student
     const student = await Student.findOne({
-      rollNumber: rollNumber.trim(),
-      email: email.toLowerCase().trim(),
+      rollNumber: normalizedRoll,
+      email: normalizedEmail,
     });
 
     if (!student) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({
+        message: 'Invalid credentials',
+      });
     }
 
-    // Check password using the schema method (supports both bcrypt and plain text for backward compatibility)
-    const isPasswordCorrect = await student.comparePassword(password);
+    // Check password
+    const isPasswordCorrect =
+      await student.comparePassword(password);
+
     if (!isPasswordCorrect) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({
+        message: 'Invalid credentials',
+      });
     }
 
-    // Device binding logic
+    // Check if device belongs to another student
     const deviceUsedByAnother = await Student.findOne({
-      deviceId,
+      deviceId: normalizedDeviceId,
       _id: { $ne: student._id },
     });
 
-    // Check if student's account is locked to another device
-    if (student.deviceId && student.deviceId !== deviceId) {
-      return res
-        .status(403)
-        .json({ message: 'Your account is locked to another device.' });
+    // Account already locked to another device
+    if (
+      student.deviceId &&
+      student.deviceId !== normalizedDeviceId
+    ) {
+      return res.status(403).json({
+        message:
+          'Your account is locked to another device.',
+      });
     }
 
-    // Check if this device is already assigned to another student
+    // Device already assigned
     if (!student.deviceId && deviceUsedByAnother) {
-      return res
-        .status(403)
-        .json({ message: 'This device is already assigned to another student.' });
+      return res.status(403).json({
+        message:
+          'This device is already assigned to another student.',
+      });
     }
 
-    // Assign device to student if not already assigned
+    // Save device
     if (!student.deviceId) {
-      student.deviceId = deviceId;
-      student.lastLoginAt = new Date();
-      await student.save();
-    } else {
-      // Update last login for existing device
-      await Student.findByIdAndUpdate(student._id, { lastLoginAt: new Date() });
+      student.deviceId = normalizedDeviceId;
     }
 
-    // Check face enrollment status using the schema method
-    const faceStatus = student.getFaceStatus();
-    const faceEnrollmentCompleted = faceStatus.enrolled;
+    student.lastLoginAt = new Date();
 
-    // Return success response
+    await student.save();
+
+    // Face status
+    const faceStatus = student.getFaceStatus();
+
     res.status(200).json({
       _id: student._id,
       name: student.name,
@@ -165,18 +188,19 @@ router.post('/student/login', async (req, res) => {
       year: student.year,
       token: generateToken(student._id),
       deviceId: student.deviceId,
-      faceEnrollmentCompleted,
-      isFirstLogin: !faceEnrollmentCompleted, // Flag to indicate if face enrollment is needed
-      faceStatus: faceStatus // Additional face enrollment details
+      faceEnrollmentCompleted: faceStatus.enrolled,
+      isFirstLogin: !faceStatus.enrolled,
+      faceStatus,
     });
   } catch (error) {
     console.error('Login error:', error);
-    res
-      .status(500)
-      .json({ message: 'Server error. Please try again later.' });
+
+    res.status(500).json({
+      message:
+        'Server error. Please try again later.',
+    });
   }
 });
-
 
 
 module.exports = router;
