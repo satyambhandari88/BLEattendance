@@ -98,11 +98,11 @@ router.post('/teacher/login', async (req, res) => {
 
 // Student Login
 router.post('/student/login', async (req, res) => {
-  const { rollNumber, email, password, deviceId } = req.body;
-
   try {
+    const { rollNumber, email, password, deviceId } = req.body;
+
     // Validate input
-    if (!rollNumber || !email || !password || !deviceId) {
+    if (!rollNumber || !email || !password) {
       return res.status(400).json({
         message: 'All fields are required',
       });
@@ -110,15 +110,15 @@ router.post('/student/login', async (req, res) => {
 
     // Normalize values
     const normalizedRoll = rollNumber.trim();
-    const normalizedEmail = email.toLowerCase().trim();
-    const normalizedDeviceId = deviceId.trim();
 
-    // Extra device validation
-    if (normalizedDeviceId.length < 5) {
-      return res.status(400).json({
-        message: 'Invalid device ID',
-      });
-    }
+    const normalizedEmail = email
+      .toLowerCase()
+      .trim();
+
+    const normalizedDeviceId =
+      deviceId && typeof deviceId === 'string'
+        ? deviceId.trim()
+        : null;
 
     // Find student
     const student = await Student.findOne({
@@ -142,13 +142,63 @@ router.post('/student/login', async (req, res) => {
       });
     }
 
-    // Check if device belongs to another student
-    const deviceUsedByAnother = await Student.findOne({
-      deviceId: normalizedDeviceId,
-      _id: { $ne: student._id },
-    });
+    // =========================
+    // DEVICE LOGIC
+    // =========================
 
-    // Account already locked to another device
+    // If frontend sends no deviceId
+    // allow login without device binding
+    if (!normalizedDeviceId) {
+      student.lastLoginAt = new Date();
+
+      await student.save();
+
+      const faceStatus =
+        student.getFaceStatus();
+
+      return res.status(200).json({
+        _id: student._id,
+        name: student.name,
+        email: student.email,
+        rollNumber: student.rollNumber,
+        department: student.department,
+        year: student.year,
+        token: generateToken(student._id),
+        deviceId: student.deviceId || null,
+        faceEnrollmentCompleted:
+          faceStatus.enrolled,
+        isFirstLogin:
+          !faceStatus.enrolled,
+        faceStatus,
+      });
+    }
+
+    // Find another student using same device
+    const deviceUsedByAnother =
+      await Student.findOne({
+        deviceId: {
+          $exists: true,
+          $nin: [null, '', 'undefined'],
+        },
+        _id: { $ne: student._id },
+      });
+
+    console.log(
+      'Incoming Device ID:',
+      normalizedDeviceId
+    );
+
+    console.log(
+      'Student Current Device:',
+      student.deviceId
+    );
+
+    console.log(
+      'Device Used By Another:',
+      deviceUsedByAnother
+    );
+
+    // Student already locked to another device
     if (
       student.deviceId &&
       student.deviceId !== normalizedDeviceId
@@ -159,27 +209,35 @@ router.post('/student/login', async (req, res) => {
       });
     }
 
-    // Device already assigned
-    if (!student.deviceId && deviceUsedByAnother) {
+    // Device already assigned to another student
+    if (
+      !student.deviceId &&
+      deviceUsedByAnother &&
+      deviceUsedByAnother.deviceId ===
+        normalizedDeviceId
+    ) {
       return res.status(403).json({
         message:
           'This device is already assigned to another student.',
       });
     }
 
-    // Save device
+    // First login → bind device
     if (!student.deviceId) {
-      student.deviceId = normalizedDeviceId;
+      student.deviceId =
+        normalizedDeviceId;
     }
 
+    // Update login time
     student.lastLoginAt = new Date();
 
     await student.save();
 
     // Face status
-    const faceStatus = student.getFaceStatus();
+    const faceStatus =
+      student.getFaceStatus();
 
-    res.status(200).json({
+    return res.status(200).json({
       _id: student._id,
       name: student.name,
       email: student.email,
@@ -188,14 +246,19 @@ router.post('/student/login', async (req, res) => {
       year: student.year,
       token: generateToken(student._id),
       deviceId: student.deviceId,
-      faceEnrollmentCompleted: faceStatus.enrolled,
-      isFirstLogin: !faceStatus.enrolled,
+      faceEnrollmentCompleted:
+        faceStatus.enrolled,
+      isFirstLogin:
+        !faceStatus.enrolled,
       faceStatus,
     });
   } catch (error) {
-    console.error('Login error:', error);
+    console.error(
+      'Student Login Error:',
+      error
+    );
 
-    res.status(500).json({
+    return res.status(500).json({
       message:
         'Server error. Please try again later.',
     });
